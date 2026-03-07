@@ -250,8 +250,15 @@ function launchInstallerAndRestart(msiPath) {
 
   fs.writeFileSync(scriptPath, script, 'utf8');
 
-  // Spawn detached PowerShell — survives after this process exits
-  const child = spawn('powershell.exe', [
+  // Use cmd.exe /c start to launch PowerShell as a truly independent process.
+  // spawn('powershell.exe', ..., { detached: true }) is unreliable from
+  // packaged Electron apps — the child often dies with the parent.
+  const psPath = path.join(process.env.SystemRoot || 'C:\\Windows',
+    'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+
+  const child = spawn('cmd.exe', [
+    '/c', 'start', '""', '/b',
+    psPath,
     '-ExecutionPolicy', 'Bypass',
     '-WindowStyle', 'Hidden',
     '-File', scriptPath,
@@ -262,10 +269,10 @@ function launchInstallerAndRestart(msiPath) {
   });
   child.unref();
 
-  // Give the script a moment to start, then quit
+  // Give cmd.exe enough time to spawn PowerShell, then quit
   setTimeout(() => {
     app.quit();
-  }, 500);
+  }, 1500);
 }
 
 // ── Exports ───────────────────────────────────────────────────────────
