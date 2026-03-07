@@ -216,35 +216,34 @@ function launchInstallerAndRestart(msiPath) {
   const appExePath = app.getPath('exe');
   const scriptDir = path.dirname(msiPath);
   const scriptPath = path.join(scriptDir, 'drt-update.ps1');
+  const logPath = path.join(scriptDir, 'drt-update.log');
 
-  // Build PowerShell script that:
-  //   1. Waits for the app to exit
-  //   2. Runs MSI installer with elevation (per-machine requires admin)
-  //   3. Re-launches the app
-  //   4. Cleans up
+  // Use single-quoted strings in PowerShell — they are literal,
+  // so backslashes are just backslashes (no escaping needed).
   const script = [
     '# DRT Updater Script',
-    '$ErrorActionPreference = "SilentlyContinue"',
+    `$logFile = '${logPath}'`,
+    `$msiPath = '${msiPath}'`,
+    `$appExe  = '${appExePath}'`,
+    '',
+    'function Log($msg) { "$(Get-Date -f o) $msg" | Out-File -Append $logFile }',
+    '',
+    'Log "Updater started, waiting for app to exit..."',
     'Start-Sleep -Seconds 3',
     '',
-    '# Install MSI with elevation',
-    `$msiPath = "${msiPath.replace(/\\/g, '\\\\')}"`,
-    `$appExe  = "${appExePath.replace(/\\/g, '\\\\')}"`,
-    '',
     'try {',
-    '  Start-Process msiexec -ArgumentList "/i","`"$msiPath`"","/passive","/norestart","REINSTALLMODE=amus" -Verb RunAs -Wait',
+    '    Log "Starting MSI install: $msiPath"',
+    '    Start-Process msiexec -ArgumentList "/i `"$msiPath`" /passive /norestart REINSTALLMODE=amus" -Verb RunAs -Wait -ErrorAction Stop',
+    '    Log "MSI install completed"',
     '} catch {',
-    '  # If user declined UAC, just relaunch the app',
-    '  Start-Process $appExe',
-    '  Remove-Item $msiPath -Force -ErrorAction SilentlyContinue',
-    '  Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue',
-    '  exit',
+    '    Log "Install failed or UAC declined: $_"',
     '}',
     '',
-    '# Relaunch the app',
+    '# Always relaunch the app',
+    'Log "Relaunching app: $appExe"',
     'Start-Process $appExe',
     '',
-    '# Clean up',
+    '# Clean up installer (keep log for troubleshooting)',
     'Remove-Item $msiPath -Force -ErrorAction SilentlyContinue',
     'Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue',
   ].join('\r\n');

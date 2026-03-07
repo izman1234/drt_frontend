@@ -1,6 +1,6 @@
 {
   "name": "drt-frontend",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "Discord Replacement Tool - Desktop Client",
   "author": "DRT",
   "main": "main.js",
