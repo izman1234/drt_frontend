@@ -1,0 +1,86 @@
+{
+  "name": "drt-frontend",
+  "version": "1.0.0",
+  "description": "Discord Replacement Tool - Desktop Client",
+  "author": "DRT",
+  "main": "main.js",
+  "homepage": "./",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/izman1234/drt_frontend.git"
+  },
+  "scripts": {
+    "start": "react-app-rewired start",
+    "build": "react-app-rewired build",
+    "electron": "electron .",
+    "dev": "concurrently \"npm start\" \"wait-on http://localhost:3000 && npm run electron\"",
+    "eject": "react-scripts eject",
+    "dist": "react-app-rewired build && npx electron-builder --win msi",
+    "dist:dir": "react-app-rewired build && npx electron-builder --win --dir"
+  },
+  "dependencies": {
+    "axios": "^1.4.0",
+    "libsodium-wrappers-sumo": "^0.8.2",
+    "react": "^18.2.0",
+    "react-app-rewired": "^2.2.1",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "react-window": "^2.2.7",
+    "socket.io-client": "^4.6.1"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0",
+    "electron": "^25.0.0",
+    "electron-builder": "^24.13.3",
+    "wait-on": "^7.0.1"
+  },
+  "build": {
+    "extends": null,
+    "appId": "com.drt.desktop",
+    "productName": "DRT",
+    "artifactName": "DRT-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build-resources"
+    },
+    "files": [
+      "build/**/*",
+      "main.js",
+      "preload.js",
+      "updater.js",
+      "package.json",
+      "!node_modules"
+    ],
+    "extraMetadata": {
+      "dependencies": {}
+    },
+    "win": {
+      "target": [
+        "msi"
+      ],
+      "icon": "build-resources/icon.png"
+    },
+    "msi": {
+      "oneClick": false,
+      "perMachine": true,
+      "runAfterFinish": true
+    }
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}

@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  NODE_VERSION: '18'
+
+jobs:
+  build-windows-msi:
+    name: Build Windows MSI Installer
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Verify tag matches package version
+        shell: pwsh
+        run: |
+          $pkg = Get-Content package.json | ConvertFrom-Json
+          $pkgVersion = $pkg.version
+          $tagVersion = "${{ github.ref_name }}".TrimStart('v')
+          if ($pkgVersion -ne $tagVersion) {
+            Write-Error "Tag version ($tagVersion) does not match package.json version ($pkgVersion)! Update package.json before tagging."
+            exit 1
+          }
+          Write-Host "Version match: $pkgVersion"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build React app
+        run: npm run build
+
+      - name: Build MSI installer
+        run: npx electron-builder --win msi --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute SHA256 checksum
+        shell: pwsh
+        working-directory: dist
+        run: |
+          $msi = Get-ChildItem -Filter "*.msi" | Select-Object -First 1
+          if (-not $msi) {
+            Write-Error "No MSI found in dist/"
+            exit 1
+          }
+          $hash = (Get-FileHash $msi.FullName -Algorithm SHA256).Hash.ToLower()
+          $line = "$hash  $($msi.Name)"
+          $line | Out-File -Encoding utf8NoBOM -NoNewline "$($msi.Name).sha256"
+          Write-Host "SHA256: $line"
+
+      - name: List artifacts
+        shell: pwsh
+        working-directory: dist
+        run: |
+          Get-ChildItem -Filter "*.msi*" | Format-Table Name, Length
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/*.msi
+            dist/*.msi.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

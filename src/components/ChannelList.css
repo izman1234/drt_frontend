@@ -1,0 +1,369 @@
+.channel-list {
+  padding: 0;
+}
+
+.channel-edit-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 99;
+  pointer-events: auto;
+}
+
+.channel-group {
+  margin-bottom: 16px;
+}
+
+.channel-group h4 {
+  color: #a78bba;
+  font-size: 12px;
+  font-weight: bold;
+  text-transform: uppercase;
+  padding: 0 16px;
+  margin: 16px 0 8px 0;
+}
+
+.channel-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 16px;
+  color: #a78bba;
+  cursor: grab;
+  transition: background 0.2s, color 0.2s;
+  position: relative;
+}
+
+.channel-item:active {
+  cursor: grabbing;
+}
+
+.channel-item.dragging {
+  opacity: 0.5;
+  background: #2a1f42;
+}
+
+.channel-item.drag-over {
+  background: #3a2554;
+  border-top: 2px solid #9d43e1;
+  margin-top: -2px;
+  padding-top: 6px;
+}
+
+.channel-item:hover {
+  background: #2a1f42;
+  color: #e9d5ff;
+}
+
+.channel-item.active {
+  background: #2a1f42;
+  color: #e9d5ff;
+  border-left: 3px solid #9d43e1;
+  padding-left: 13px;
+}
+
+.channel-item.unread {
+  color: #ffffff;
+  font-weight: bold;
+}
+
+.channel-item.unread .channel-name {
+  color: #ffffff;
+}
+
+.channel-item.unread::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 8px;
+  border-radius: 0 4px 4px 0;
+  background: #ffffff;
+}
+
+.channel-icon {
+  margin-right: 8px;
+  font-size: 14px;
+}
+
+.channel-name {
+  flex: 1;
+  font-size: 14px;
+}
+
+.channel-with-members {
+  display: flex;
+  flex-direction: column;
+}
+
+.channel-members {
+  padding-left: 28px;
+  padding-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow: visible;
+  position: relative;
+}
+
+.voice-member-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.voice-member-wrapper .voice-control-inline {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1001;
+  background: #0f0a15;
+  border: 1px solid #3a2554;
+  border-radius: 4px;
+  padding: 12px 8px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  width: 200px;
+}
+
+.voice-member {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 16px 4px 0;
+  color: #a78bba;
+  font-size: 12px;
+}
+
+.voice-member-avatar {
+  position: relative;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #3a2554;
+  border: 2px solid transparent;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.voice-member-avatar.speaking {
+  border-color: #43b581;
+  box-shadow: 0 0 8px rgba(67, 181, 129, 0.6);
+}
+
+.voice-member-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.voice-member-initial {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 10px;
+  color: #e9d5ff;
+  background: #3a2554;
+  border-radius: 50%;
+}
+
+.voice-member-status-dot {
+  position: absolute;
+  bottom: -3px;
+  right: -3px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #2c2f33;
+  border-radius: 50%;
+  z-index: 10;
+}
+
+.voice-member-status-dot.online {
+  background: #43b581;
+}
+
+.voice-member-status-dot.offline {
+  background: #72767d;
+}
+
+.voice-member-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.voice-member-icons {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.voice-member-icons .status-icon {
+  font-size: 12px;
+}
+
+.voice-member-icons .status-icon.muted {
+  color: #f04747;
+}
+
+.voice-member-icons .status-icon.deafened {
+  color: #b9bbbe;
+}
+
+.voice-member.selected-for-control {
+  background: rgba(157, 67, 225, 0.2);
+  border-radius: 4px;
+}
+
+.voice-member.selected-for-control:hover {
+  background: rgba(157, 67, 225, 0.3);
+}
+
+.channel-member {
+  color: #b9bbbe;
+  font-size: 13px;
+  padding: 2px 0;
+}
+
+.channel-settings-icon {
+  background: none;
+  border: none;
+  color: #72767d;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+  margin-right: 4px;
+  transition: color 0.2s;
+}
+
+.channel-settings-icon:hover {
+  color: #b9bbbe;
+}
+
+.channel-context-menu {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  background: #2c2f33;
+  border: 1px solid #202225;
+  border-radius: 4px;
+  min-width: 150px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+}
+
+.context-item {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  background: none;
+  border: none;
+  color: #dcddde;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.context-item:hover {
+  background: #3c3f45;
+}
+
+.context-item.delete {
+  color: #f04747;
+  border-top: 1px solid #202225;
+}
+
+.context-item.delete:hover {
+  background: rgba(240, 71, 71, 0.1);
+}
+
+.channel-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #1a0d26;
+  border: 1px solid #3a2554;
+  border-radius: 6px;
+  margin: 4px 0;
+  position: relative;
+  z-index: 100;
+}
+
+.edit-input {
+  padding: 8px 10px;
+  background: #15111f;
+  border: 1px solid #3a2554;
+  border-radius: 4px;
+  color: #e9d5ff;
+  font-size: 13px;
+}
+
+.edit-input:focus {
+  outline: none;
+  border-color: #9d43e1;
+  background: #15111f;
+}
+
+.edit-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.save-btn,
+.cancel-btn,
+.delete-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.save-btn {
+  background: #9d43e1;
+  color: #ffffff;
+}
+
+.save-btn:hover {
+  background: #7a2fb8;
+}
+
+.cancel-btn {
+  background: #2a1f42;
+  color: #a78bba;
+  border: 1px solid #3a2554;
+}
+
+.cancel-btn:hover {
+  background: #3a2554;
+  color: #e9d5ff;
+}
+
+.delete-btn {
+  background: transparent;
+  color: #ff6b7a;
+  border: 1px solid rgba(255, 71, 87, 0.4);
+}
+
+.delete-btn:hover {
+  background: rgba(255, 71, 87, 0.15);
+}

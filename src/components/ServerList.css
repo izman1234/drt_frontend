@@ -1,0 +1,342 @@
+/* ── Server List Bar ─────────────────────────────────────────────── */
+.server-list-bar {
+  width: 72px;
+  min-width: 72px;
+  background: #0d0a14;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 0 0;
+  gap: 0;
+  overflow: hidden;
+  border-right: 1px solid #1a1225;
+  flex-shrink: 0;
+}
+
+/* ── Scrollable items area ───────────────────────────────────────── */
+.server-list-scroll {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 0 8px;
+}
+
+/* ── Server Icon Wrapper ──────────────────────────────────────────── */
+.server-icon-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  justify-content: center;
+  padding: 4px 0;
+}
+
+/* Pill indicator on the left */
+.server-icon-wrapper .server-pill {
+  position: absolute;
+  left: 0;
+  width: 4px;
+  height: 0;
+  background: #e9d5ff;
+  border-radius: 0 4px 4px 0;
+  transition: height 0.2s ease;
+}
+
+.server-icon-wrapper:hover .server-pill {
+  height: 20px;
+}
+
+.server-icon-wrapper.active .server-pill {
+  height: 36px;
+}
+
+/* ── Server Icon Button ───────────────────────────────────────────── */
+.server-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #1f1629;
+  border: none;
+  color: #a78bba;
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-radius 0.2s ease, background 0.2s ease, color 0.2s ease;
+  overflow: hidden;
+  padding: 0;
+}
+
+.server-icon:hover {
+  border-radius: 16px;
+  background: #9d43e1;
+  color: #ffffff;
+}
+
+.server-icon.active {
+  border-radius: 16px;
+  background: #9d43e1;
+  color: #ffffff;
+}
+
+.server-icon:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+
+.server-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ── Add Server Button (inline in scroll area) ─────────────── */
+.server-add-wrapper {
+  padding: 4px 0;
+}
+
+.server-add-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #1f1629;
+  border: none;
+  color: #4ade80;
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-radius 0.2s ease, background 0.2s ease, color 0.2s ease;
+  padding: 0;
+}
+
+.server-add-btn:hover {
+  border-radius: 16px;
+  background: #4ade80;
+  color: #ffffff;
+}
+
+/* ── Add Server Modal ─────────────────────────────────────────────── */
+.server-add-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 1000;
+}
+
+.server-add-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1001;
+  pointer-events: none;
+}
+
+.server-add-modal-content {
+  background: #1a0d26;
+  border-radius: 8px;
+  padding: 24px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  pointer-events: auto;
+}
+
+.server-add-modal-content h3 {
+  color: #e9d5ff;
+  margin: 0 0 8px 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.server-add-modal-content p {
+  color: #a78bba;
+  margin: 0 0 16px 0;
+  font-size: 14px;
+}
+
+.server-add-error {
+  background: rgba(255, 71, 87, 0.15);
+  border: 1px solid rgba(255, 71, 87, 0.4);
+  color: #ff6b7a;
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.server-add-modal-content input {
+  width: 100%;
+  padding: 12px;
+  background: #15111f;
+  border: 1px solid #3a2554;
+  border-radius: 4px;
+  color: #e9d5ff;
+  font-size: 14px;
+  box-sizing: border-box;
+  margin-bottom: 16px;
+}
+
+.server-add-modal-content input:focus {
+  outline: none;
+  border-color: #9d43e1;
+}
+
+.server-add-modal-content input:disabled {
+  opacity: 0.6;
+}
+
+.server-add-modal-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+.server-add-cancel {
+  padding: 10px 20px;
+  background: none;
+  border: 1px solid #3a2554;
+  border-radius: 4px;
+  color: #a78bba;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.server-add-cancel:hover {
+  background: #2a1f42;
+  color: #e9d5ff;
+}
+
+.server-add-confirm {
+  padding: 10px 20px;
+  background: #9d43e1;
+  border: none;
+  border-radius: 4px;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.server-add-confirm:hover {
+  background: #7a2fb8;
+}
+
+.server-add-confirm:disabled,
+.server-add-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Leave Server Popover ─────────────────────────────────────────── */
+.leave-menu-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+}
+
+.leave-menu-popover {
+  position: fixed;
+  left: 80px;
+  transform: translateY(-50%);
+  background: #1a0d26;
+  border: 1px solid #3a2554;
+  border-radius: 6px;
+  padding: 4px;
+  z-index: 1001;
+  min-width: 130px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.leave-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: #ff6b7a;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.leave-menu-item:hover {
+  background: rgba(255, 71, 87, 0.15);
+}
+
+.leave-menu-item.change-ip {
+  color: #e9d5ff;
+}
+
+.leave-menu-item.change-ip:hover {
+  background: rgba(157, 67, 225, 0.15);
+}
+
+/* ── Change IP Modal Fields ───────────────────────────────────────── */
+.change-ip-fields {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.change-ip-field {
+  flex: 1;
+}
+
+.change-ip-field.port {
+  flex: 0 0 100px;
+}
+
+.change-ip-field label {
+  display: block;
+  color: #a78bba;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.change-ip-field input {
+  width: 100%;
+  padding: 12px;
+  background: #15111f;
+  border: 1px solid #3a2554;
+  border-radius: 4px;
+  color: #e9d5ff;
+  font-size: 14px;
+  box-sizing: border-box;
+  margin-bottom: 0;
+}
+
+.change-ip-field input:focus {
+  outline: none;
+  border-color: #9d43e1;
+}
+
+.change-ip-field input:disabled {
+  opacity: 0.6;
+}

@@ -1,0 +1,231 @@
+.color-picker-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.color-picker-modal {
+  background: #1a0d26;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  width: 320px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.color-picker-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #2a1f42;
+}
+
+.color-picker-header h3 {
+  margin: 0;
+  color: #e9d5ff;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.color-picker-close-btn {
+  background: none;
+  border: none;
+  color: #a78bba;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.color-picker-close-btn:hover {
+  background: rgba(157, 67, 225, 0.15);
+  color: #e9d5ff;
+}
+
+.color-picker-body {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Saturation / Lightness area */
+.color-picker-sl-area {
+  position: relative;
+  width: 100%;
+  height: 180px;
+  border-radius: 6px;
+  cursor: crosshair;
+  user-select: none;
+  overflow: hidden;
+}
+
+.color-picker-sl-white {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.5) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.color-picker-sl-black {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.8) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.color-picker-sl-cursor {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Hue bar */
+.color-picker-hue-bar {
+  position: relative;
+  width: 100%;
+  height: 16px;
+  border-radius: 8px;
+  background: linear-gradient(to right,
+    hsl(0, 100%, 50%),
+    hsl(60, 100%, 50%),
+    hsl(120, 100%, 50%),
+    hsl(180, 100%, 50%),
+    hsl(240, 100%, 50%),
+    hsl(300, 100%, 50%),
+    hsl(360, 100%, 50%)
+  );
+  cursor: pointer;
+  user-select: none;
+}
+
+.color-picker-hue-cursor {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 20px;
+  border-radius: 3px;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
+  background: transparent;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* Preview + hex input */
+.color-picker-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-picker-swatch {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  border: 2px solid #3a2554;
+  flex-shrink: 0;
+}
+
+.color-picker-hex-input {
+  flex: 1;
+  background: #15111f;
+  border: 1px solid #3a2554;
+  border-radius: 4px;
+  color: #e9d5ff;
+  font-size: 14px;
+  font-family: monospace;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.color-picker-hex-input:focus {
+  border-color: #9d43e1;
+}
+
+/* Presets */
+.color-picker-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.color-picker-preset {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+  padding: 0;
+}
+
+.color-picker-preset:hover {
+  border-color: #e9d5ff;
+  transform: scale(1.1);
+}
+
+.color-picker-preset.active {
+  border-color: #ffffff;
+  box-shadow: 0 0 6px rgba(157, 67, 225, 0.5);
+}
+
+/* Actions */
+.color-picker-actions {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid #2a1f42;
+  justify-content: flex-end;
+}
+
+.color-picker-cancel-btn,
+.color-picker-save-btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.color-picker-cancel-btn {
+  background: #2a1f42;
+  color: #a78bba;
+}
+
+.color-picker-cancel-btn:hover {
+  background: #3a2554;
+  color: #e9d5ff;
+}
+
+.color-picker-save-btn {
+  background: #9d43e1;
+  color: #ffffff;
+}
+
+.color-picker-save-btn:hover {
+  background: #b55af2;
+}

@@ -1,0 +1,411 @@
+.auth-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100%;
+  background: linear-gradient(135deg, #15111f 0%, #2a1f42 100%);
+}
+
+.auth-box {
+  background: #15111f;
+  padding: 40px;
+  border-radius: 10px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.5);
+  width: 100%;
+  max-width: 420px;
+  border: 1px solid #2a1f42;
+}
+
+.auth-box-wide {
+  max-width: 640px;
+}
+
+.auth-box h1 {
+  text-align: center;
+  margin-bottom: 10px;
+  color: #e9d5ff;
+}
+
+.auth-subtitle {
+  text-align: center;
+  color: #a78bba;
+  font-size: 13px;
+  margin-bottom: 20px;
+  line-height: 1.4;
+}
+
+.auth-box form {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+.auth-box input,
+.auth-box textarea {
+  padding: 12px;
+  border: 1px solid #3a2554;
+  border-radius: 5px;
+  background: #1f1629;
+  color: #e9d5ff;
+  font-size: 14px;
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+
+.auth-box input:focus,
+.auth-box textarea:focus {
+  outline: none;
+  border-color: #9d43e1;
+  background: #1f1629;
+}
+
+.readonly-input {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.seed-input {
+  resize: vertical;
+  min-height: 70px;
+  font-family: monospace;
+  font-size: 13px;
+}
+
+.auth-box button[type="submit"] {
+  padding: 12px;
+  background: #9d43e1;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 16px;
+  transition: background 0.3s;
+}
+
+.auth-box button[type="submit"]:hover:not(:disabled) {
+  background: #7a2fb8;
+}
+
+.auth-box button[type="submit"]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.error-message {
+  background: rgba(255, 71, 87, 0.15);
+  color: #ff6b7a;
+  padding: 10px;
+  border-radius: 5px;
+  margin-bottom: 15px;
+  font-size: 13px;
+  border: 1px solid rgba(255, 71, 87, 0.3);
+  word-break: break-word;
+}
+
+.success-message {
+  background: rgba(123, 44, 191, 0.15);
+  color: #c084fc;
+  padding: 10px;
+  border-radius: 5px;
+  margin-bottom: 15px;
+  font-size: 14px;
+  border: 1px solid rgba(123, 44, 191, 0.3);
+}
+
+/* ── Auth links ──────────────────────────────────────────────────────── */
+
+.auth-links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.link-btn {
+  background: none;
+  border: none;
+  color: #9d43e1;
+  cursor: pointer;
+  text-decoration: underline;
+  font-size: 14px;
+  padding: 4px;
+  transition: color 0.2s;
+}
+
+.link-btn:hover {
+  color: #b85ff5;
+}
+
+.link-btn.danger {
+  color: #a78bba;
+  text-decoration: none;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.link-btn.danger:hover {
+  color: #ff6b7a;
+  opacity: 1;
+}
+
+/* ── Seed display ────────────────────────────────────────────────────── */
+
+.seed-warning {
+  background: rgba(255, 193, 7, 0.1);
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  color: #ffd54f;
+  padding: 14px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.seed-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.seed-word {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #1f1629;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #3a2554;
+  font-family: monospace;
+}
+
+.seed-number {
+  color: #6b5b7b;
+  font-size: 11px;
+  min-width: 20px;
+  text-align: right;
+}
+
+.seed-text {
+  color: #e9d5ff;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Recovery key display box */
+.recovery-key-display {
+  background: #1f1629;
+  border: 1px solid #3a2554;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.2s, background 0.2s;
+  position: relative;
+}
+
+.recovery-key-display:hover {
+  border-color: #9d43e1;
+  background: #261a33;
+}
+
+.recovery-key-display:active {
+  background: #2e1f3d;
+}
+
+.recovery-key-text {
+  color: #e9d5ff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  word-break: break-all;
+  line-height: 1.8;
+  display: block;
+}
+
+.recovery-key-copy-hint {
+  display: block;
+  margin-top: 10px;
+  color: #6b5b7b;
+  font-size: 12px;
+}
+
+/* Recovery key input styling */
+.recovery-key-input {
+  font-family: monospace !important;
+  letter-spacing: 1px !important;
+  font-size: 13px !important;
+}
+
+/* ── Account picker ──────────────────────────────────────────────────── */
+
+.account-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.account-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-select-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #1f1629;
+  border: 1px solid #3a2554;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s;
+  text-align: left;
+  color: inherit;
+}
+
+.account-select-btn:hover {
+  background: #261a33;
+  border-color: #9d43e1;
+}
+
+.account-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: #3a2554;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 16px;
+  color: #e9d5ff;
+  flex-shrink: 0;
+}
+
+.account-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.account-display-name {
+  color: #e9d5ff;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-username {
+  color: #6b5b7b;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.account-remove-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #6b5b7b;
+  cursor: pointer;
+  font-size: 14px;
+  transition: color 0.2s, background 0.2s, border-color 0.2s;
+  flex-shrink: 0;
+}
+
+.account-remove-btn:hover {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+  border-color: rgba(255, 107, 107, 0.3);
+}
+
+.seed-continue-btn {
+  width: 100%;
+  padding: 14px;
+  background: #9d43e1;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 15px;
+  transition: background 0.3s, opacity 0.3s;
+}
+
+.seed-continue-btn:hover:not(:disabled) {
+  background: #7a2fb8;
+}
+
+.seed-continue-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Restore options ─────────────────────────────────────────────────── */
+
+.restore-options {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.restore-option-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 18px;
+  background: #1f1629;
+  border: 1px solid #3a2554;
+  border-radius: 8px;
+  color: #e9d5ff;
+  font-size: 15px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.restore-option-btn:hover {
+  border-color: #9d43e1;
+  background: #251c35;
+}
+
+.restore-option-desc {
+  font-size: 12px;
+  color: #a78bba;
+  font-weight: normal;
+}
+
+.back-button {
+  background: #2a1f42;
+  color: #e9d5ff;
+  padding: 12px;
+  border: 1px solid #3a2554;
+  border-radius: 5px;
+  cursor: pointer;
+  font-weight: bold;
+  font-size: 14px;
+  width: 100%;
+  margin-top: 16px;
+  transition: background 0.3s;
+}
+
+.back-button:hover {
+  background: #3a2554;
+}
