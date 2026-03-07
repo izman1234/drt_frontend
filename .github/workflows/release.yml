@@ -44,6 +44,8 @@ jobs:
 
       - name: Build React app
         run: npm run build
+        env:
+          CI: false
 
       - name: Build MSI installer
         run: npx electron-builder --win msi --publish never
