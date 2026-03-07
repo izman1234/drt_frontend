@@ -1,6 +1,6 @@
 {
   "name": "drt-frontend",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Discord Replacement Tool - Desktop Client",
   "author": "DRT",
   "main": "main.js",
@@ -63,7 +63,8 @@
     "msi": {
       "oneClick": false,
       "perMachine": true,
-      "runAfterFinish": true
+      "runAfterFinish": true,
+      "warningsAsErrors": false
     }
   },
   "eslintConfig": {
