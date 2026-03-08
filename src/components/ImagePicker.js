@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import CustomModal from './CustomModal';
 import './ImagePicker.css';
 
 const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
@@ -8,6 +9,14 @@ const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
   const containerRef = useRef(null);
   const fileInputRef = useRef(null);
   const MAX_IMAGES = 50;
+  const [modalInfo, setModalInfo] = useState({ open: false, message: '' });
+
+  const showModal = (message, { title = '' } = {}) => {
+    setModalInfo({ open: true, title, message });
+  };
+  const closeModal = () => {
+    setModalInfo(prev => ({ ...prev, open: false }));
+  };
 
   // Load images and favorites from localStorage
   useEffect(() => {
@@ -56,7 +65,12 @@ const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
 
     Array.from(files).forEach(file => {
       if (images.length >= MAX_IMAGES) {
-        alert(`Maximum ${MAX_IMAGES} images allowed`);
+        showModal(`Maximum ${MAX_IMAGES} images allowed`, { title: 'Limit Reached' });
+        return;
+      }
+
+      if (!file.type.startsWith('image/')) {
+        showModal('Please select an image file', { title: 'Invalid File' });
         return;
       }
 
@@ -261,6 +275,14 @@ const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
           </div>
         )}
       </div>
+      <CustomModal
+        isOpen={modalInfo.open}
+        title={modalInfo.title}
+        message={modalInfo.message}
+        type="alert"
+        onConfirm={closeModal}
+        onCancel={closeModal}
+      />
     </div>
   );
 };

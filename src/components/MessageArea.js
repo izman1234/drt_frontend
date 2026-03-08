@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { messageAPI } from '../api';
 import GifPicker from './GifPicker';
 import ImagePicker from './ImagePicker';
+import CustomModal from './CustomModal';
 import './MessageArea.css';
 
 // SQLite stores CURRENT_TIMESTAMP as 'YYYY-MM-DD HH:MM:SS' with no timezone
@@ -90,6 +91,17 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
   const [reactionContextMessageId, setReactionContextMessageId] = useState(null); // which message is adding reaction
   const [reactionPickerPosition, setReactionPickerPosition] = useState({ x: 0, y: 0 });
   const [reactionPickerPositionDirection, setReactionPickerPositionDirection] = useState('below'); // 'above' or 'below'
+  const [modalInfo, setModalInfo] = useState({ open: false, title: '', message: '', type: 'alert', onConfirm: null, onCancel: null });
+
+  const showModal = (message, { title = '', type = 'alert', onConfirm, onCancel } = {}) => {
+    setModalInfo({ open: true, title, message, type, onConfirm: onConfirm || null, onCancel: onCancel || null });
+  };
+  const closeModal = (confirmed = false) => {
+    const info = modalInfo;
+    setModalInfo(prev => ({ ...prev, open: false }));
+    if (confirmed && info.onConfirm) info.onConfirm();
+    if (!confirmed && info.onCancel) info.onCancel();
+  };
   const fileInputRef = useRef(null);
   const emojiPickerRef = useRef(null);
   const editEmojiPickerRef = useRef(null);
@@ -341,7 +353,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
       };
       reader.readAsDataURL(file);
     } else {
-      alert('Please select an image file');
+      showModal('Please select an image file', { title: 'Invalid File' });
     }
   };
 
@@ -611,7 +623,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
         setEmojiPickerFor('compose');
       } catch (error) {
         console.error('Error editing message:', error);
-        alert('Failed to edit message');
+        showModal('Failed to edit message', { title: 'Error' });
       }
     }
   };
@@ -625,16 +637,20 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
     setEmojiPickerFor('compose');
   };
 
-  const handleDeleteMessage = async (messageId) => {
-    if (window.confirm('Are you sure you want to delete this message?')) {
-      try {
-        await messageAPI.deleteMessage(messageId);
-        setContextMenu(null);
-      } catch (error) {
-        console.error('Error deleting message:', error);
-        alert('Failed to delete message');
-      }
-    }
+  const handleDeleteMessage = (messageId) => {
+    showModal('Are you sure you want to delete this message?', {
+      title: 'Delete Message',
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          await messageAPI.deleteMessage(messageId);
+          setContextMenu(null);
+        } catch (error) {
+          console.error('Error deleting message:', error);
+          showModal('Failed to delete message', { title: 'Error' });
+        }
+      },
+    });
   };
 
   const handleReactionButtonClick = (e, messageId) => {
@@ -1229,6 +1245,14 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
       </div>
 
       </div>
+      <CustomModal
+        isOpen={modalInfo.open}
+        title={modalInfo.title}
+        message={modalInfo.message}
+        type={modalInfo.type}
+        onConfirm={() => closeModal(true)}
+        onCancel={() => closeModal(false)}
+      />
     </>
   );
 }

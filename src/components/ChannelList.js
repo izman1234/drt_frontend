@@ -1,5 +1,6 @@
 import React, { useState, useCallback, memo } from 'react';
 import { channelAPI } from '../api';
+import CustomModal from './CustomModal';
 import './ChannelList.css';
 
 // Memoized component to prevent unnecessary re-renders
@@ -82,22 +83,37 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
   const [draggedChannel, setDraggedChannel] = useState(null);
   const [dragOverChannel, setDragOverChannel] = useState(null);
   const [, setDragOverGroupType] = useState(null);
+  const [modalInfo, setModalInfo] = useState({ open: false, title: '', message: '', type: 'alert', onConfirm: null, onCancel: null });
+
+  const showModal = (message, { title = '', type = 'alert', onConfirm, onCancel } = {}) => {
+    setModalInfo({ open: true, title, message, type, onConfirm: onConfirm || null, onCancel: onCancel || null });
+  };
+  const closeModal = (confirmed = false) => {
+    const info = modalInfo;
+    setModalInfo(prev => ({ ...prev, open: false }));
+    if (confirmed && info.onConfirm) info.onConfirm();
+    if (!confirmed && info.onCancel) info.onCancel();
+  };
 
   const handleSettingsClick = (e, channel) => {
     e.stopPropagation();
     handleEditClick(channel);
   };
 
-  const handleDelete = async (channel) => {
-    if (window.confirm(`Delete channel "${channel.name}"?`)) {
-      try {
-        await channelAPI.deleteChannel(channel.id);
-        if (onChannelsChanged) onChannelsChanged();
-      } catch (error) {
-        console.error('Error deleting channel:', error);
-        alert('Failed to delete channel');
-      }
-    }
+  const handleDelete = (channel) => {
+    showModal(`Delete channel "${channel.name}"?`, {
+      title: 'Delete Channel',
+      type: 'confirm',
+      onConfirm: async () => {
+        try {
+          await channelAPI.deleteChannel(channel.id);
+          if (onChannelsChanged) onChannelsChanged();
+        } catch (error) {
+          console.error('Error deleting channel:', error);
+          showModal('Failed to delete channel', { title: 'Error' });
+        }
+      },
+    });
   };
 
   const handleEditClick = (channel) => {
@@ -113,7 +129,7 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
       if (onChannelsChanged) onChannelsChanged();
     } catch (error) {
       console.error('Error updating channel:', error);
-      alert('Failed to update channel');
+      showModal('Failed to update channel', { title: 'Error' });
     }
   };
 
@@ -178,7 +194,7 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
       if (onChannelsChanged) onChannelsChanged();
     } catch (error) {
       console.error('Error reordering channel:', error);
-      alert('Failed to reorder channel');
+      showModal('Failed to reorder channel', { title: 'Error' });
     } finally {
       setDraggedChannel(null);
       setDragOverChannel(null);
@@ -305,6 +321,16 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
           </div>
         )}
       </div>
+    <>
+      <CustomModal
+        isOpen={modalInfo.open}
+        title={modalInfo.title}
+        message={modalInfo.message}
+        type={modalInfo.type}
+        onConfirm={() => closeModal(true)}
+        onCancel={() => closeModal(false)}
+      />
+    </>
     </>
   );
 }

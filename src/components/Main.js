@@ -9,6 +9,7 @@ import VoiceArea from './VoiceArea';
 import ImageCropper from './ImageCropper';
 import ColorPicker from './ColorPicker';
 import ServerList from './ServerList';
+import CustomModal from './CustomModal';
 import './Main.css';
 
 function Main({ onLogout, identityKeys }) {
@@ -70,6 +71,16 @@ function Main({ onLogout, identityKeys }) {
   const [connectingServer, setConnectingServer] = useState(false);
   const [serverError, setServerError] = useState('');
   const [lastAttemptedServer, setLastAttemptedServer] = useState(null);
+  const [modalInfo, setModalInfo] = useState({ open: false, title: '', message: '', type: 'alert', onConfirm: null });
+
+  const showModal = (message, { title = '', type = 'alert', onConfirm } = {}) => {
+    setModalInfo({ open: true, title, message, type, onConfirm: onConfirm || null });
+  };
+  const closeModal = (confirmed = false) => {
+    const info = modalInfo;
+    setModalInfo(prev => ({ ...prev, open: false }));
+    if (confirmed && info.onConfirm) info.onConfirm();
+  };
 
   // Idle detection constant (30 seconds of inactivity = away)
   const IDLE_TIMEOUT = 30000;
@@ -1061,7 +1072,7 @@ function Main({ onLogout, identityKeys }) {
       setShowSettings(false);
     } catch (error) {
       console.error('Error updating settings:', error);
-      alert('Failed to update settings on server. Changes saved locally and will sync on reconnect.');
+      showModal('Failed to update settings on server. Changes saved locally and will sync on reconnect.', { title: 'Settings' });
       setShowSettings(false);
     }
   };
@@ -1070,7 +1081,7 @@ function Main({ onLogout, identityKeys }) {
     try {
       const storedIdentity = localStorage.getItem('drt_identity');
       if (!storedIdentity) {
-        alert('No identity data to export');
+        showModal('No identity data to export', { title: 'Export Backup' });
         return;
       }
       const identityData = JSON.parse(storedIdentity);
@@ -1079,7 +1090,7 @@ function Main({ onLogout, identityKeys }) {
       if (window.electron && window.electron.exportBackup) {
         const result = await window.electron.exportBackup(blob);
         if (result.success) {
-          alert('Backup exported successfully!');
+          showModal('Backup exported successfully!', { title: 'Export Backup' });
         }
       } else {
         // Fallback for non-Electron: download as file
@@ -1091,7 +1102,7 @@ function Main({ onLogout, identityKeys }) {
       }
     } catch (err) {
       console.error('Export backup error:', err);
-      alert('Failed to export backup: ' + err.message);
+      showModal('Failed to export backup: ' + err.message, { title: 'Export Error' });
     }
   };
 
@@ -1839,6 +1850,14 @@ function Main({ onLogout, identityKeys }) {
           </div>
         </div>
       )}
+      <CustomModal
+        isOpen={modalInfo.open}
+        title={modalInfo.title}
+        message={modalInfo.message}
+        type={modalInfo.type}
+        onConfirm={() => closeModal(true)}
+        onCancel={() => closeModal(false)}
+      />
     </div>
   );
 }
