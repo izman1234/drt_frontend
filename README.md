@@ -4,7 +4,7 @@ The desktop client component of the Discord Replacement Tool. A self-hosted, pri
 
 ## Disclaimer
 
-I do not claim to be a expert in security or secure software design. This project started as a way to not use Discord after all the age verification and AI stuff and was made for fun. On that note, this project may contain many bugs or security vulnerabilities. By using it, you expect all risk and responsibility for running or modifying it.
+I do not claim to be a expert in security or secure software design. This project started as a way to not use Discord after all the age verification and AI stuff happened and this project and was made for fun. On that note, this project may contain many bugs or security vulnerabilities. By using it, you accept all risk and responsibility for running or modifying it.
 
 ## Features
 
