@@ -1,6 +1,10 @@
 # DRT Frontend
 
-The desktop client for the Discord Replacement Tool — an Electron + React application providing a Discord-like chat experience with end-to-end identity verification and real-time communication.
+The desktop client component of the Discord Replacement Tool. A self-hosted, privacy-focused chat platform providing a Discord-like experience with real-time messaging / communication, voice channels, and end-to-end identity verification.
+
+## Disclaimer
+
+I do not claim to be a expert in security or secure software design. This project started as a way to not use Discord after all the age verification and AI stuff and was made for fun. On that note, this project may contain many bugs or security vulnerabilities. By using it, you expect all risk and responsibility for running or modifying it.
 
 ## Features
 
@@ -35,8 +39,8 @@ The desktop client for the Discord Replacement Tool — an Electron + React appl
 
 ## Setup
 
-If you only care about using it and not actually contributing go to the tags tab and download the installer of the desired version. 
-Else:
+If you only care about using it and not actually contributing go to the tags tab and download the installer of the desired version. Then run it and it'll prompt you for some installation instructions. That's it!
+Else if you'd rather contribute:
 
 1. Install dependencies:
    ```bash
@@ -118,4 +122,4 @@ The built files go to the `build/` directory and are served by Electron in produ
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+See [LICENSE](LICENSE) for details.
