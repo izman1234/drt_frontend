@@ -1,0 +1,56 @@
+/* ── Twemoji: cross-platform emoji images ────────────────────────── */
+
+/* Generic inline twemoji image */
+img.twemoji {
+  display: inline-block;
+  vertical-align: middle;
+  /* Prevent selection highlight on the image */
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+}
+
+/* Twemoji inside emoji-option buttons (emoji picker grid) */
+.emoji-option img.twemoji {
+  pointer-events: none;
+}
+
+/* Twemoji inside message content — inline with text */
+.message-content img.twemoji {
+  width: 1.2em;
+  height: 1.2em;
+  margin: 0 0.05em;
+  vertical-align: -0.15em;
+}
+
+/* Twemoji inside reaction pills */
+.reaction-emoji img.twemoji {
+  width: 18px;
+  height: 18px;
+  vertical-align: middle;
+}
+
+/* Twemoji inside action buttons (add file, image picker, emoji btn) */
+.action-button img.twemoji,
+.message-edit-emoji-btn img.twemoji {
+  vertical-align: middle;
+}
+
+/* Twemoji inside voice settings buttons — align with text */
+.voice-test-btn img.twemoji,
+.voice-reset-btn img.twemoji,
+.voice-warning-icon img.twemoji {
+  vertical-align: middle;
+  margin-right: 2px;
+}
+
+/* Twemoji inside status icons (ChannelList mute/deafen) */
+.status-icon img.twemoji,
+.mute-button img.twemoji {
+  vertical-align: middle;
+}
+
+/* Emoji category tabs */
+.emoji-category-tab img.twemoji {
+  vertical-align: middle;
+}

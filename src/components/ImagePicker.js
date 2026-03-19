@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import CustomModal from './CustomModal';
+import Twemoji from './Twemoji';
 import './ImagePicker.css';
 
 const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
@@ -183,7 +184,7 @@ const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
                       }}
                       title={favorites.includes(image.id) ? 'Remove from favorites' : 'Add to favorites'}
                     >
-                      {favorites.includes(image.id) ? '⭐' : '☆'}
+                      {favorites.includes(image.id) ? <Twemoji emoji="⭐" size={14} /> : '☆'}
                     </button>
                     <button
                       className="image-delete-btn"
@@ -193,7 +194,7 @@ const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
                       }}
                       title="Delete image"
                     >
-                      🗑️
+                      <Twemoji emoji="🗑️" size={14} />
                     </button>
                   </div>
                 ))}
@@ -224,7 +225,7 @@ const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
                       }}
                       title="Remove from favorites"
                     >
-                      ⭐
+                      <Twemoji emoji="⭐" size={14} />
                     </button>
                     <button
                       className="image-delete-btn"
@@ -234,7 +235,7 @@ const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
                       }}
                       title="Delete image"
                     >
-                      🗑️
+                      <Twemoji emoji="🗑️" size={14} />
                     </button>
                   </div>
                 ))}
@@ -263,7 +264,7 @@ const ImagePicker = ({ onImageSelect, onClose, accountKey }) => {
                   className="upload-button"
                   onClick={() => fileInputRef.current?.click()}
                 >
-                  📁 Choose Images
+                  <Twemoji emoji="📁" size={14} /> Choose Images
                 </button>
                 <div className="upload-info">
                   Select one or more images to upload

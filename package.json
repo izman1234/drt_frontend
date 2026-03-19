@@ -15,8 +15,8 @@
     "electron": "electron .",
     "dev": "concurrently \"npm start\" \"wait-on http://localhost:3000 && npm run electron\"",
     "eject": "react-scripts eject",
-    "dist": "react-app-rewired build && npx electron-builder --win msi",
-    "dist:dir": "react-app-rewired build && npx electron-builder --win --dir"
+    "dist": "node sync-version.js && react-app-rewired build && npx electron-builder --win msi",
+    "dist:dir": "node sync-version.js && react-app-rewired build && npx electron-builder --win --dir"
   },
   "dependencies": {
     "axios": "^1.4.0",

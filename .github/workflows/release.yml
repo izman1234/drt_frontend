@@ -27,17 +27,14 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Verify tag matches package version
+      - name: Sync version from git tag
         shell: pwsh
         run: |
-          $pkg = Get-Content package.json | ConvertFrom-Json
-          $pkgVersion = $pkg.version
           $tagVersion = "${{ github.ref_name }}".TrimStart('v')
-          if ($pkgVersion -ne $tagVersion) {
-            Write-Error "Tag version ($tagVersion) does not match package.json version ($pkgVersion)! Update package.json before tagging."
-            exit 1
-          }
-          Write-Host "Version match: $pkgVersion"
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $pkg.version = $tagVersion
+          $pkg | ConvertTo-Json -Depth 10 | Set-Content package.json -Encoding utf8NoBOM
+          Write-Host "Set package.json version to $tagVersion"
 
       - name: Install dependencies
         run: npm ci

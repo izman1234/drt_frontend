@@ -1,85 +1,13 @@
 import React, { useEffect, useRef, useCallback, useState } from 'react';
+import {
+  createAudioFilters,
+  getUserMediaConstraints,
+  subscribeToPipelineUpdates,
+} from '../audioEngine';
+import { loadVoiceSettings } from '../voiceSettings';
 import './VoiceArea.css';
 
 const ICE_SERVERS = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-
-// Detect Electron — Chrome's web audio pipeline applies hidden internal
-// gain/processing that Electron's Chromium does not, so we compensate.
-const IS_ELECTRON = !!(window.electron);
-
-// Create audio filters for aggressive noise suppression and voice enhancement
-const createAudioFilters = (audioContext, sourceNode) => {
-  // Mute control gain node - allows us to actually stop audio flow when muted
-  const muteGain = audioContext.createGain();
-  muteGain.gain.value = 1; // Default to unmuted
-
-  // High-pass filter to remove low-frequency rumble and desk tapping
-  // Raised to 250Hz to aggressively cut out low-frequency noise
-  const highPassFilter = audioContext.createBiquadFilter();
-  highPassFilter.type = 'highpass';
-  highPassFilter.frequency.value = 250;
-  highPassFilter.Q.value = 0.5;
-
-  // Additional band-stop filter to remove 400Hz where tapping sounds are prominent
-  const notchFilter = audioContext.createBiquadFilter();
-  notchFilter.type = 'notch';
-  notchFilter.frequency.value = 400;
-  notchFilter.Q.value = 2;
-
-  // Noise gate script processor to silence sounds below a threshold
-  // This will mute any sound quieter than -40dB, which handles background noise
-  const scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-  let gateThreshold = -40; // dB threshold
-  const gateAttack = 0.005;
-  const gateRelease = 0.1;
-  let gateEnvelope = 0;
-
-  scriptProcessor.onaudioprocess = (event) => {
-    const input = event.inputBuffer.getChannelData(0);
-    const output = event.outputBuffer.getChannelData(0);
-    
-    // Calculate RMS (root mean square) to detect sound level
-    let sum = 0;
-    for (let i = 0; i < input.length; i++) {
-      sum += input[i] * input[i];
-    }
-    const rms = Math.sqrt(sum / input.length);
-    const db = 20 * Math.log10(Math.max(rms, 0.00001)); // Avoid log(0)
-    
-    // Gate envelope follows the signal level
-    const targetGain = db > gateThreshold ? 1 : 0;
-    const rate = targetGain > gateEnvelope ? gateAttack : gateRelease;
-    gateEnvelope += (targetGain - gateEnvelope) * rate;
-    
-    // Apply gate envelope
-    for (let i = 0; i < input.length; i++) {
-      output[i] = input[i] * gateEnvelope;
-    }
-  };
-
-  // Very aggressive compressor to reduce dynamic range and boost speech
-  const compressor = audioContext.createDynamicsCompressor();
-  compressor.threshold.value = -30;  // Lower threshold = more compression
-  compressor.knee.value = 10;        // Gentler knee
-  compressor.ratio.value = 6;        // Higher ratio = more aggressive
-  compressor.attack.value = 0.003;
-  compressor.release.value = 0.15;
-
-  // Gain node for final volume boost after filtering
-  // Electron needs a bigger boost because Chrome's web pipeline adds hidden gain
-  const gainNode = audioContext.createGain();
-  gainNode.gain.value = IS_ELECTRON ? 2.8 : 1.5;
-
-  // Connect the chain: source -> muteGain -> highPass -> notch -> gate -> compressor -> gain
-  sourceNode.connect(muteGain);
-  muteGain.connect(highPassFilter);
-  highPassFilter.connect(notchFilter);
-  notchFilter.connect(scriptProcessor);
-  scriptProcessor.connect(compressor);
-  compressor.connect(gainNode);
-
-  return { muteGain, highPassFilter, notchFilter, scriptProcessor, compressor, gainNode };
-};
 
 function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeafened, voiceMembers = [], currentUserId, selectedUserForControl, onSelectUserForControl, userVolumes, userMutes, onVolumeChange, onToggleMute }) {
   const localStreamRef = useRef(null);
@@ -120,6 +48,17 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
   useEffect(() => {
     channelRef.current = channel;
   }, [channel]);
+
+  // Subscribe to live voice settings changes and patch the audio pipeline in real time
+  useEffect(() => {
+    const unsub = subscribeToPipelineUpdates({
+      filtersRef: audioFiltersRef,
+      remoteGainNodesRef,
+      localStreamRef,
+      audioContextRef,
+    });
+    return unsub;
+  }, []);
 
   const createPeerConnection = useCallback((peerSocketId) => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
@@ -164,7 +103,9 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       }
       const source = remoteAudioCtx.createMediaStreamSource(remoteStream);
       const gainNode = remoteAudioCtx.createGain();
-      gainNode.gain.value = 1.0;
+      // Apply persisted output volume from voice settings
+      const vs = loadVoiceSettings();
+      gainNode.gain.value = Math.max(0, Math.min(2, vs.outputVolume));
       source.connect(gainNode);
       gainNode.connect(remoteAudioCtx.destination);
       remoteGainNodesRef.current[peerSocketId] = { gainNode, audioContext: remoteAudioCtx };
@@ -415,15 +356,9 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       // Clean up local audio resources (socket cleanup is handled by effect cleanup)
       cleanupLocalResources();
 
-      // Request fresh microphone stream
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: false,
-          sampleRate: { ideal: 16000 }
-        }
-      });
+      // Request fresh microphone stream (using persisted voice settings)
+      const constraints = getUserMediaConstraints();
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
 
       // Create fresh audio context
@@ -433,7 +368,7 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
         audioContext.resume().catch(() => {});
       }
 
-      // Set up audio processing chain
+      // Set up audio processing chain (reading from persisted voice settings)
       const source = audioContext.createMediaStreamSource(stream);
       const filters = createAudioFilters(audioContext, source);
       const destination = audioContext.createMediaStreamDestination();

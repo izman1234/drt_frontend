@@ -10,6 +10,8 @@ import ImageCropper from './ImageCropper';
 import ColorPicker from './ColorPicker';
 import ServerList from './ServerList';
 import CustomModal from './CustomModal';
+import VoiceSettings from './VoiceSettings';
+import Twemoji from './Twemoji';
 import './Main.css';
 
 function Main({ onLogout, identityKeys }) {
@@ -1406,7 +1408,7 @@ function Main({ onLogout, identityKeys }) {
           <div className="sidebar-footer">
             <div className="voice-call-bar">
               <div className="voice-call-info">
-                <span className="voice-channel-name">🔊 {activeVoiceChannel.name}</span>
+                <span className="voice-channel-name"><Twemoji emoji="🔊" size={16} /> {activeVoiceChannel.name}</span>
               </div>
               <div className="voice-call-controls">
                 <button
@@ -1414,17 +1416,17 @@ function Main({ onLogout, identityKeys }) {
                   className={`voice-btn ${isMuted ? 'muted' : ''}`}
                   title={isMuted ? "Unmute" : "Mute"}
                 >
-                  {isMuted ? '🔇' : '🎤'}
+                  {isMuted ? <Twemoji emoji="🔇" size={18} /> : <Twemoji emoji="🎤" size={18} />}
                 </button>
                 <button
                   onClick={handleToggleDeafen}
                   className={`voice-btn ${isDeafened ? 'deafened' : ''}`}
                   title={isDeafened ? "Undeafen" : "Deafen"}
                 >
-                  {isDeafened ? '🔕' : '🔊'}
+                  {isDeafened ? <Twemoji emoji="🔕" size={18} /> : <Twemoji emoji="🔊" size={18} />}
                 </button>
                 <button onClick={handleLeaveVoice} className="hangup-btn" title="Leave Voice">
-                  📞
+                  <Twemoji emoji="📞" size={18} />
                 </button>
               </div>
             </div>
@@ -1445,7 +1447,7 @@ function Main({ onLogout, identityKeys }) {
           <span className="user-name" style={{ color: normalizeNameColor(userNameColor) }}>{userDisplayName}</span>
         </div>
         <button onClick={() => { if (!showSettings) setSettingsTab('user'); setShowSettings(!showSettings); }} className="settings-btn" title="Settings">
-          ⚙️
+          <Twemoji emoji="⚙️" size={18} />
         </button>
       </div>
 
@@ -1470,6 +1472,12 @@ function Main({ onLogout, identityKeys }) {
                     onClick={() => setSettingsTab('identity')}
                   >
                     Identity &amp; Security
+                  </button>
+                  <button
+                    className={`settings-tab-btn${settingsTab === 'voice' ? ' active' : ''}`}
+                    onClick={() => setSettingsTab('voice')}
+                  >
+                    Voice
                   </button>
                   <button
                     className={`settings-tab-btn${settingsTab === 'updates' ? ' active' : ''}`}
@@ -1576,7 +1584,7 @@ function Main({ onLogout, identityKeys }) {
                               backgroundColor: connectedServer.url.startsWith('https://') ? '#166534' : '#854d0e',
                               color: connectedServer.url.startsWith('https://') ? '#4ade80' : '#fbbf24',
                             }}>
-                              {connectedServer.url.startsWith('https://') ? '🔒 HTTPS' : 'HTTP'}
+                              {connectedServer.url.startsWith('https://') ? <><Twemoji emoji="🔒" size={12} /> HTTPS</> : 'HTTP'}
                             </span>
                             <span>{connectedServer.url.replace(/^https?:\/\//, '')}</span>
                           </div>
@@ -1587,7 +1595,7 @@ function Main({ onLogout, identityKeys }) {
 
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
                         <button onClick={handleExportBackup} className="settings-identity-btn">
-                          📁 Export Encrypted Backup
+                          <Twemoji emoji="📁" size={14} /> Export Encrypted Backup
                         </button>
                         <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#e9d5ff', cursor: 'pointer' }}>
                           <input
@@ -1603,6 +1611,10 @@ function Main({ onLogout, identityKeys }) {
                         </p>
                       </div>
                     </>
+                  )}
+
+                  {settingsTab === 'voice' && (
+                    <VoiceSettings />
                   )}
 
                   {settingsTab === 'updates' && (
@@ -1656,26 +1668,26 @@ function Main({ onLogout, identityKeys }) {
                             }
                           }}
                         >
-                          {updateStatus === 'checking' ? '⏳ Checking...' : '🔄 Check for Updates'}
+                          {updateStatus === 'checking' ? <><Twemoji emoji="⏳" size={14} /> Checking...</> : <><Twemoji emoji="🔄" size={14} /> Check for Updates</>}
                         </button>
                       </div>
 
                       {updateStatus === 'up-to-date' && (
                         <div className="update-status-box update-status-ok">
-                          ✅ You are running the latest version.
+                          <Twemoji emoji="✅" size={14} /> You are running the latest version.
                         </div>
                       )}
 
                       {updateStatus === 'error' && updateError && (
                         <div className="update-status-box update-status-err">
-                          ❌ {updateError}
+                          <Twemoji emoji="❌" size={14} /> {updateError}
                         </div>
                       )}
 
                       {updateInfo && updateStatus !== 'up-to-date' && (
                         <div className="update-available-box">
                           <div className="update-available-header">
-                            <span>🎉 Update available:</span>
+                            <span><Twemoji emoji="🎉" size={14} /> Update available:</span>
                             <strong style={{ marginLeft: '6px' }}>{updateInfo.releaseName}</strong>
                           </div>
                           <div style={{ fontSize: '13px', color: '#a78bba', margin: '4px 0 8px' }}>
@@ -1700,13 +1712,13 @@ function Main({ onLogout, identityKeys }) {
 
                           {updateStatus === 'ready' && (
                             <div className="update-status-box update-status-ok">
-                              ✅ Download complete &amp; verified. Ready to install.
+                              <Twemoji emoji="✅" size={14} /> Download complete &amp; verified. Ready to install.
                             </div>
                           )}
 
                           {updateStatus === 'installing' && (
                             <div className="update-status-box update-status-ok">
-                              ⏳ Launching installer... The app will close and restart.
+                              <Twemoji emoji="⏳" size={14} /> Launching installer... The app will close and restart.
                             </div>
                           )}
 
@@ -1734,7 +1746,7 @@ function Main({ onLogout, identityKeys }) {
                                   }
                                 }}
                               >
-                                ⬇️ Download Update
+                                <Twemoji emoji="⬇️" size={14} /> Download Update
                               </button>
                             )}
 
@@ -1752,7 +1764,7 @@ function Main({ onLogout, identityKeys }) {
                                   }
                                 }}
                               >
-                                🚀 Install &amp; Restart
+                                <Twemoji emoji="🚀" size={14} /> Install &amp; Restart
                               </button>
                             )}
 

@@ -1,6 +1,7 @@
 import React, { useState, useCallback, memo } from 'react';
 import { channelAPI } from '../api';
 import CustomModal from './CustomModal';
+import Twemoji from './Twemoji';
 import './ChannelList.css';
 
 // Memoized component to prevent unnecessary re-renders
@@ -31,8 +32,8 @@ const VoiceMemberComponent = memo(({ member, isSelected, onSelect, isSpeaking, n
         </div>
         <span className="voice-member-name" style={{ color: nameColor || '#a78bba' }}>{member.displayName || member.username || member.id}</span>
         <span className="voice-member-icons">
-          {member.isMuted && <span className="status-icon muted" title="Muted">🔇</span>}
-          {member.isDeafened && <span className="status-icon deafened" title="Deafened">🔕</span>}
+          {member.isMuted && <span className="status-icon muted" title="Muted"><Twemoji emoji="🔇" size={14} /></span>}
+          {member.isDeafened && <span className="status-icon deafened" title="Deafened"><Twemoji emoji="🔕" size={14} /></span>}
         </span>
       </div>
       
@@ -47,7 +48,7 @@ const VoiceMemberComponent = memo(({ member, isSelected, onSelect, isSpeaking, n
               }}
               title={userMutes && userMutes[member.id] ? 'Unmute' : 'Mute'}
             >
-              {userMutes && userMutes[member.id] ? '🔇' : '🔊'}
+              {userMutes && userMutes[member.id] ? <Twemoji emoji="🔇" size={16} /> : <Twemoji emoji="🔊" size={16} />}
             </button>
             
             <div className="volume-slider-container">
@@ -246,7 +247,7 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
         onMouseLeave={() => setHoveredChannel(null)}
         onClick={() => onSelectChannel(channel)}
       >
-        <span className="channel-icon">{channel.type === 'text' ? '#' : '🔊'}</span>
+        <span className="channel-icon">{channel.type === 'text' ? '#' : <Twemoji emoji="🔊" size={14} />}</span>
         <span className="channel-name">{channel.name}</span>
         {hoveredChannel === channel.id && (
           <button
@@ -254,7 +255,7 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
             onClick={(e) => handleSettingsClick(e, channel)}
             title="Channel settings"
           >
-            ⚙️
+            <Twemoji emoji="⚙️" size={14} />
           </button>
         )}
       </div>

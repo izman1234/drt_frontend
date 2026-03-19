@@ -10,6 +10,7 @@ import {
   deriveFromRecoveryKey,
   isValidRecoveryKey,
 } from '../crypto';
+import Twemoji from './Twemoji';
 import './Auth.css';
 
 /**
@@ -454,7 +455,7 @@ function Auth({ onAuthSuccess }) {
         <div className="auth-box auth-box-wide">
           <h1>Recovery Key</h1>
           <div className="seed-warning">
-            ⚠️ Copy this recovery key and keep it safe. This is the ONLY way to recover
+            <Twemoji emoji="⚠️" size={16} /> Copy this recovery key and keep it safe. This is the ONLY way to recover
             your identity if you forget your password or lose this device.
             <strong> If you lose both your password AND this key, your identity cannot be recovered.</strong>
           </div>
@@ -595,11 +596,11 @@ function Auth({ onAuthSuccess }) {
 
           <div className="restore-options">
             <button className="restore-option-btn" onClick={handleRestoreFile}>
-              📁 Import Backup File
+              <Twemoji emoji="📁" size={16} /> Import Backup File
               <span className="restore-option-desc">If you exported a backup previously</span>
             </button>
             <button className="restore-option-btn" onClick={() => setStep('restore-server')}>
-              🌐 Download from Server
+              <Twemoji emoji="🌐" size={16} /> Download from Server
               <span className="restore-option-desc">If your backup was uploaded to a server</span>
             </button>
           </div>

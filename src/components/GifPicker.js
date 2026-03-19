@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { gifAPI } from '../api';
+import Twemoji from './Twemoji';
 import './GifPicker.css';
 
 const GifPicker = ({ onGifSelect, onClose, accountKey }) => {
@@ -186,7 +187,7 @@ const GifPicker = ({ onGifSelect, onClose, accountKey }) => {
             className={`gif-tab ${activeTab === 'favorites' ? 'active' : ''}`}
             onClick={() => setActiveTab('favorites')}
           >
-            ⭐ Favorites ({favorites.length})
+            <Twemoji emoji="⭐" size={14} /> Favorites ({favorites.length})
           </button>
           <button
             className={`gif-tab ${activeTab === 'categories' ? 'active' : ''}`}
@@ -251,7 +252,7 @@ const GifPicker = ({ onGifSelect, onClose, accountKey }) => {
                       onClick={() => toggleFavorite(gif)}
                       title={isFavorite(gif.id) ? 'Remove from favorites' : 'Add to favorites'}
                     >
-                      ⭐
+                      <Twemoji emoji="⭐" size={14} />
                     </button>
                   </div>
                 );

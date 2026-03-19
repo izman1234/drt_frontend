@@ -3,6 +3,7 @@ import { messageAPI } from '../api';
 import GifPicker from './GifPicker';
 import ImagePicker from './ImagePicker';
 import CustomModal from './CustomModal';
+import Twemoji, { parseTextWithEmoji } from './Twemoji';
 import './MessageArea.css';
 
 // SQLite stores CURRENT_TIMESTAMP as 'YYYY-MM-DD HH:MM:SS' with no timezone
@@ -814,7 +815,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                             title="Add emoji"
                             onClick={handleEditEmojiClick}
                           >
-                            😊
+                            <Twemoji emoji="😊" size={18} />
                           </button>
                           {showEmojiPicker && emojiPickerFor === 'edit' && (
                             <div className={`emoji-picker-dropdown position-${emojiPickerPosition}`}>
@@ -834,7 +835,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                                       onClick={() => handleCategoryTabClick('recently')}
                                       title="Recently Used"
                                     >
-                                      🕐
+                                      <Twemoji emoji="🕐" size={18} />
                                     </button>
                                   )}
                                   {Object.entries(getFilteredEmojis()).map(([key, category]) => (
@@ -844,7 +845,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                                       onClick={() => handleCategoryTabClick(key)}
                                       title={category.name}
                                     >
-                                      {category.icon}
+                                      <Twemoji emoji={category.icon} size={18} />
                                     </button>
                                   ))}
                                 </div>
@@ -860,7 +861,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                                             className="emoji-option"
                                             onClick={() => handleEmojiSelect(emoji)}
                                           >
-                                            {emoji}
+                                            <Twemoji emoji={emoji} size={22} />
                                           </button>
                                         ))}
                                       </div>
@@ -877,7 +878,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                                             className="emoji-option"
                                             onClick={() => handleEmojiSelect(emoji)}
                                           >
-                                            {emoji}
+                                            <Twemoji emoji={emoji} size={22} />
                                           </button>
                                         ))}
                                       </div>
@@ -905,7 +906,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                       </div>
                     </div>
                   ) : (
-                    message.content && <p className="message-content">{message.content}</p>
+                    message.content && <p className="message-content">{parseTextWithEmoji(message.content, 20)}</p>
                   )}
                   <div className="message-reactions">
                     {message.reactions && message.reactions.length > 0 && (
@@ -916,7 +917,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                             className={`reaction-pill ${reaction.userIds.includes(currentUserId) ? 'user-reacted' : ''}`}
                             onClick={() => handleReactionClick(message.id, reaction.emoji, reaction.userIds)}
                           >
-                            <span className="reaction-emoji">{reaction.emoji}</span>
+                            <span className="reaction-emoji"><Twemoji emoji={reaction.emoji} size={18} /></span>
                             <span className="reaction-count">{reaction.count}</span>
                           </button>
                         ))}
@@ -928,7 +929,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                       title="Add reaction"
                       style={(!message.reactions || message.reactions.length === 0) ? { display: 'none' } : {}}
                     >
-                      ➕
+<Twemoji emoji="➕" size={16} />
                     </button>
                   </div>
                 </div>
@@ -967,7 +968,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                   onClick={() => handleCategoryTabClick('recently')}
                   title="Recently Used"
                 >
-                  🕐
+                  <Twemoji emoji="🕐" size={18} />
                 </button>
               )}
               {Object.entries(getFilteredEmojis()).map(([key, category]) => (
@@ -977,7 +978,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                   onClick={() => handleCategoryTabClick(key)}
                   title={category.name}
                 >
-                  {category.icon}
+                  <Twemoji emoji={category.icon} size={18} />
                 </button>
               ))}
             </div>
@@ -993,7 +994,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                         className="emoji-option"
                         onClick={() => handleEmojiSelect(emoji)}
                       >
-                        {emoji}
+                        <Twemoji emoji={emoji} size={22} />
                       </button>
                     ))}
                   </div>
@@ -1010,7 +1011,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                         className="emoji-option"
                         onClick={() => handleEmojiSelect(emoji)}
                       >
-                        {emoji}
+                        <Twemoji emoji={emoji} size={22} />
                       </button>
                     ))}
                   </div>
@@ -1091,7 +1092,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
             title="Add image or file"
             onClick={() => fileInputRef.current?.click()}
           >
-            ➕
+            <Twemoji emoji="➕" size={16} />
           </button>
           <input
             ref={fileInputRef}
@@ -1145,7 +1146,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                   setShowImagePicker(!showImagePicker);
                 }}
               >
-                🖼️
+                <Twemoji emoji="🖼️" size={18} />
               </button>
               {showImagePicker && (
                 <ImagePicker
@@ -1166,7 +1167,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                   setShowEmojiPicker(!showEmojiPicker);
                 }}
               >
-                😊
+                <Twemoji emoji="😊" size={18} />
               </button>
               {showEmojiPicker && emojiPickerFor === 'compose' && (
                 <div className="emoji-picker-dropdown">
@@ -1186,7 +1187,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                           onClick={() => handleCategoryTabClick('recently')}
                           title="Recently Used"
                         >
-                          🕐
+                          <Twemoji emoji="🕐" size={18} />
                         </button>
                       )}
                       {Object.entries(getFilteredEmojis()).map(([key, category]) => (
@@ -1196,7 +1197,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                           onClick={() => handleCategoryTabClick(key)}
                           title={category.name}
                         >
-                          {category.icon}
+                          <Twemoji emoji={category.icon} size={18} />
                         </button>
                       ))}
                     </div>
@@ -1212,7 +1213,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                                 className="emoji-option"
                                 onClick={() => handleEmojiSelect(emoji)}
                               >
-                                {emoji}
+                                <Twemoji emoji={emoji} size={22} />
                               </button>
                             ))}
                           </div>
@@ -1229,7 +1230,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                                 className="emoji-option"
                                 onClick={() => handleEmojiSelect(emoji)}
                               >
-                                {emoji}
+                                <Twemoji emoji={emoji} size={22} />
                               </button>
                             ))}
                           </div>
