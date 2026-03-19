@@ -3,6 +3,8 @@ import {
   createAudioFilters,
   getUserMediaConstraints,
   subscribeToPipelineUpdates,
+  createRemoteAudioChain,
+  volumeToGain,
 } from '../audioEngine';
 import { loadVoiceSettings } from '../voiceSettings';
 import './VoiceArea.css';
@@ -17,8 +19,9 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
   const dataArrayRef = useRef({});
   const remoteSpeakingRef = useRef({}); // { userId: isSpeaking }
   const audioContextRef = useRef(null);
+  const remoteAudioContextRef = useRef(null); // Shared AudioContext for all remote peer playback (created during user gesture)
   const audioFiltersRef = useRef({}); // { userId: { highPassFilter, compressor, gainNode, muteGain } }
-  const remoteGainNodesRef = useRef({}); // { socketId: { gainNode, audioContext } } for per-peer volume control
+  const remoteGainNodesRef = useRef({}); // { socketId: { gainNode } } for per-peer volume control
   const isMutedRef = useRef(isMuted);
   const currentMuteStateRef = useRef(isMuted);
   const speakingDetectionRef = useRef(null); // ID for cancelling setInterval
@@ -60,6 +63,25 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
     return unsub;
   }, []);
 
+  // Fallback: if the remote AudioContext is suspended (autoplay policy),
+  // resume it on the next user interaction anywhere on the page.
+  useEffect(() => {
+    const resumeOnInteraction = () => {
+      const ctx = remoteAudioContextRef.current;
+      if (ctx && ctx.state === 'suspended') {
+        ctx.resume().then(() => {
+          console.log('[Voice] Remote AudioContext resumed via user interaction');
+        }).catch(() => {});
+      }
+    };
+    document.addEventListener('click', resumeOnInteraction, { capture: true });
+    document.addEventListener('keydown', resumeOnInteraction, { capture: true });
+    return () => {
+      document.removeEventListener('click', resumeOnInteraction, { capture: true });
+      document.removeEventListener('keydown', resumeOnInteraction, { capture: true });
+    };
+  }, []);
+
   const createPeerConnection = useCallback((peerSocketId) => {
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
@@ -95,20 +117,26 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       const remoteStream = event.streams && event.streams[0];
       if (!remoteStream) return;
 
-      // Play remote audio via Web Audio API for volume amplification (0-200%)
-      // Route: MediaStream → source → gainNode → speakers (audioContext.destination)
-      const remoteAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // Play remote audio via the shared AudioContext (created in joinVoice
+      // during a user gesture so it is *not* suspended by autoplay policy).
+      // Route: MediaStream → source → gainNode → compressor/limiter → speakers
+      let remoteAudioCtx = remoteAudioContextRef.current;
+      if (!remoteAudioCtx || remoteAudioCtx.state === 'closed') {
+        // Fallback: create one now (may be suspended but we'll try to resume)
+        remoteAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+        remoteAudioContextRef.current = remoteAudioCtx;
+        console.warn('[Voice] Created fallback remote AudioContext — may be suspended');
+      }
       if (remoteAudioCtx.state === 'suspended') {
-        remoteAudioCtx.resume().catch(() => {});
+        remoteAudioCtx.resume().catch(() => {
+          console.warn('[Voice] Remote AudioContext resume failed — will retry on user interaction');
+        });
       }
       const source = remoteAudioCtx.createMediaStreamSource(remoteStream);
-      const gainNode = remoteAudioCtx.createGain();
       // Apply persisted output volume from voice settings
       const vs = loadVoiceSettings();
-      gainNode.gain.value = Math.max(0, Math.min(2, vs.outputVolume));
-      source.connect(gainNode);
-      gainNode.connect(remoteAudioCtx.destination);
-      remoteGainNodesRef.current[peerSocketId] = { gainNode, audioContext: remoteAudioCtx };
+      const { gainNode, compressor, makeupGain } = createRemoteAudioChain(remoteAudioCtx, source, vs.outputVolume);
+      remoteGainNodesRef.current[peerSocketId] = { gainNode, compressor, makeupGain };
 
       // Keep a muted audio element attached to the stream for lifecycle management
       let audioEl = audioElementsRef.current[peerSocketId];
@@ -124,6 +152,9 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       audioEl.srcObject = remoteStream;
       audioEl.muted = true; // Audio plays via Web Audio API, not the element
       audioEl.play().catch(() => {});
+
+      console.log('[Voice] Remote track connected for', peerSocketId,
+        '— AudioContext state:', remoteAudioCtx.state);
     };
 
     return pc;
@@ -138,7 +169,7 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       if (remoteGain && remoteGain.gainNode) {
         const isMutedByUser = !!(userMutes && userMutes[member.id]);
         const volume = (userVolumes && userVolumes[member.id] !== undefined) ? userVolumes[member.id] : 1;
-        remoteGain.gainNode.gain.value = isMutedByUser ? 0 : volume;
+        remoteGain.gainNode.gain.value = isMutedByUser ? 0 : volumeToGain(volume);
       }
     });
   }, [userVolumes, userMutes, voiceMembers, isDeafened]);
@@ -204,7 +235,7 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
         if (remoteGain && remoteGain.gainNode) {
           const isMutedByUser = !!(userMutes && userMutes[member.id]);
           const volume = (userVolumes && userVolumes[member.id] !== undefined) ? userVolumes[member.id] : 1;
-          remoteGain.gainNode.gain.value = isMutedByUser ? 0 : volume;
+          remoteGain.gainNode.gain.value = isMutedByUser ? 0 : volumeToGain(volume);
         }
       });
     }
@@ -271,11 +302,17 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       try { audioContextRef.current.close(); } catch (e) {}
     }
 
-    // Close remote gain node audio contexts
+    // Disconnect remote gain nodes (shared AudioContext is closed below)
     Object.values(remoteGainNodesRef.current).forEach(rg => {
-      try { rg.audioContext.close(); } catch (e) {}
+      try { if (rg.gainNode) rg.gainNode.disconnect(); } catch (e) {}
     });
     remoteGainNodesRef.current = {};
+
+    // Close shared remote AudioContext
+    if (remoteAudioContextRef.current && remoteAudioContextRef.current.state !== 'closed') {
+      try { remoteAudioContextRef.current.close(); } catch (e) {}
+    }
+    remoteAudioContextRef.current = null;
 
     // Remove audio elements
     Object.values(audioElementsRef.current).forEach(a => {
@@ -325,11 +362,17 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       try { audioContextRef.current.close(); } catch (e) {}
     }
 
-    // Close remote gain node audio contexts
+    // Disconnect remote gain nodes (shared AudioContext is closed below)
     Object.values(remoteGainNodesRef.current).forEach(rg => {
-      try { rg.audioContext.close(); } catch (e) {}
+      try { if (rg.gainNode) rg.gainNode.disconnect(); } catch (e) {}
     });
     remoteGainNodesRef.current = {};
+
+    // Close shared remote AudioContext
+    if (remoteAudioContextRef.current && remoteAudioContextRef.current.state !== 'closed') {
+      try { remoteAudioContextRef.current.close(); } catch (e) {}
+    }
+    remoteAudioContextRef.current = null;
 
     // Remove audio elements
     Object.values(audioElementsRef.current).forEach(a => {
@@ -361,12 +404,20 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       localStreamRef.current = stream;
 
-      // Create fresh audio context
+      // Create fresh audio contexts — both are created HERE inside the user-
+      // initiated joinVoice flow so they are NOT blocked by autoplay policy.
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
       const audioContext = audioContextRef.current;
       if (audioContext.state === 'suspended') {
-        audioContext.resume().catch(() => {});
+        await audioContext.resume().catch(() => {});
       }
+
+      // Shared AudioContext for all remote peer playback
+      remoteAudioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+      if (remoteAudioContextRef.current.state === 'suspended') {
+        await remoteAudioContextRef.current.resume().catch(() => {});
+      }
+      console.log('[Voice] Remote AudioContext created — state:', remoteAudioContextRef.current.state);
 
       // Set up audio processing chain (reading from persisted voice settings)
       const source = audioContext.createMediaStreamSource(stream);
@@ -490,7 +541,8 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
           }
           const remoteGain = remoteGainNodesRef.current[socketId];
           if (remoteGain) {
-            try { remoteGain.audioContext.close(); } catch (e) {}
+            // Disconnect nodes from shared AudioContext (don't close context)
+            try { remoteGain.gainNode.disconnect(); } catch (e) {}
             delete remoteGainNodesRef.current[socketId];
           }
           const audioEl = audioElementsRef.current[socketId];

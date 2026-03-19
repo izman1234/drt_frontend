@@ -20,6 +20,21 @@ import { loadVoiceSettings, onVoiceSettingsChange } from './voiceSettings';
 const IS_ELECTRON = !!(window.electron);
 
 /* ────────────────────────────────────────────────────────────────────
+ * volumeToGain — convert a linear slider value (0–2) into an
+ * exponential gain value so that 200 % actually *sounds* twice as
+ * loud.  Uses a power-curve: gain = v² — this maps:
+ *   0 %  → 0.00   (silence)
+ *  50 %  → 0.25
+ * 100 %  → 1.00   (unity)
+ * 150 %  → 2.25
+ * 200 %  → 4.00   (+12 dB — perceptually ~2× louder)
+ * ──────────────────────────────────────────────────────────────────── */
+export function volumeToGain(sliderValue) {
+  const v = Math.max(0, sliderValue);
+  return v * v;
+}
+
+/* ────────────────────────────────────────────────────────────────────
  * createAudioFilters — lifted from VoiceArea.js but now parameterised
  * by the persisted voice settings.
  * ──────────────────────────────────────────────────────────────────── */
@@ -33,8 +48,8 @@ export function createAudioFilters(audioContext, sourceNode, opts = {}) {
   // ── High-pass (remove low rumble) ─────────────────────────────────
   const highPassFilter = audioContext.createBiquadFilter();
   highPassFilter.type = 'highpass';
-  highPassFilter.frequency.value = 250;
-  highPassFilter.Q.value = 0.5;
+  highPassFilter.frequency.value = 80;
+  highPassFilter.Q.value = 0.7;
 
   // ── Notch (desk-tap removal) ──────────────────────────────────────
   const notchFilter = audioContext.createBiquadFilter();
@@ -70,9 +85,9 @@ export function createAudioFilters(audioContext, sourceNode, opts = {}) {
 
   // ── Compressor ────────────────────────────────────────────────────
   const compressor = audioContext.createDynamicsCompressor();
-  compressor.threshold.value = -30;
-  compressor.knee.value = 10;
-  compressor.ratio.value = 6;
+  compressor.threshold.value = -24;
+  compressor.knee.value = 12;
+  compressor.ratio.value = 4;
   compressor.attack.value = 0.003;
   compressor.release.value = 0.15;
 
@@ -109,7 +124,8 @@ export function getUserMediaConstraints(overrides = {}) {
       echoCancellation: vs.echoCancellation,
       noiseSuppression: vs.noiseSuppression,
       autoGainControl: vs.autoGainControl,
-      sampleRate: { ideal: 16000 },
+      sampleRate: { ideal: 48000 },
+      channelCount: { ideal: 1 },
       ...overrides,
     },
   };
@@ -136,8 +152,41 @@ export async function applyOutputDevice(audioElement) {
 export function applyRemoteGain(gainNode) {
   const vs = loadVoiceSettings();
   if (gainNode) {
-    gainNode.gain.value = Math.max(0, Math.min(2, vs.outputVolume));
+    gainNode.gain.value = volumeToGain(vs.outputVolume);
   }
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * createRemoteAudioChain — build a gain + compressor/limiter chain
+ * for remote peer playback.  The compressor prevents clipping when
+ * the user boosts another user's volume above 100 %.
+ *
+ * Chain: source → gainNode → compressor → destination
+ * ──────────────────────────────────────────────────────────────────── */
+export function createRemoteAudioChain(audioContext, sourceNode, initialGain = 1) {
+  const gainNode = audioContext.createGain();
+  gainNode.gain.value = volumeToGain(initialGain);
+
+  // Gentle limiter to tame peaks when volume is boosted
+  const compressor = audioContext.createDynamicsCompressor();
+  compressor.threshold.value = -6;   // only kick in near clipping
+  compressor.knee.value = 6;
+  compressor.ratio.value = 12;       // aggressive limiting above threshold
+  compressor.attack.value = 0.002;
+  compressor.release.value = 0.1;
+
+  // Make-up gain so limited audio doesn't sound quieter.
+  // Electron's Chromium audio subsystem on Windows tends to output lower
+  // levels than a regular browser tab, so we apply a larger boost there.
+  const makeupGain = audioContext.createGain();
+  makeupGain.gain.value = IS_ELECTRON ? 1.9 : 1.4;
+
+  sourceNode.connect(gainNode);
+  gainNode.connect(compressor);
+  compressor.connect(makeupGain);
+  makeupGain.connect(audioContext.destination);
+
+  return { gainNode, compressor, makeupGain };
 }
 
 /* ────────────────────────────────────────────────────────────────────
@@ -169,7 +218,7 @@ export function subscribeToPipelineUpdates({ filtersRef, remoteGainNodesRef, loc
       Object.values(remoteGainNodesRef.current).forEach((rg) => {
         if (rg && rg.gainNode) {
           try {
-            rg.gainNode.gain.value = Math.max(0, Math.min(2, vs.outputVolume));
+            rg.gainNode.gain.value = volumeToGain(vs.outputVolume);
           } catch {}
         }
       });

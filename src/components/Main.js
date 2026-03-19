@@ -50,7 +50,7 @@ function Main({ onLogout, identityKeys }) {
   const [isDeafened, setIsDeafened] = useState(false);
   const [speakingUsers, setSpeakingUsers] = useState({});
   const [selectedUserForControl, setSelectedUserForControl] = useState(null);
-  const [userVolumes, setUserVolumes] = useState({}); // { userId: 0-1 }
+  const [userVolumes, setUserVolumes] = useState({}); // { userId: 0-2 } (slider value, squared for gain)
   const [userMutes, setUserMutes] = useState({}); // { userId: boolean }
   const [unreadChannels, setUnreadChannels] = useState(new Set()); // Set of channel IDs with unread messages
   const [serverBackupEnabled, setServerBackupEnabled] = useState(
