@@ -414,6 +414,19 @@ function Main({ onLogout, identityKeys }) {
         }
       });
 
+      // Reset mute/deafen state on every fresh connection so the UI always
+      // starts unmuted and in sync with the backend (which also resets on
+      // connection). This runs HERE instead of in a useEffect socket.on('connect')
+      // handler because by the time setSocket triggers the effect, the socket
+      // is already connected and the 'connect' event has already fired.
+      setIsMuted(false);
+      setIsDeafened(false);
+      const storedUserId = localStorage.getItem('userId');
+      if (storedUserId) {
+        socketInstance.emit('voice:set-muted', { userId: storedUserId, isMuted: false });
+        socketInstance.emit('voice:set-deafened', { userId: storedUserId, isDeafened: false });
+      }
+
       // Small delay after socket connect to let the backend's async DB write
       // (UPDATE status='online') and broadcastUserList() complete before we
       // make REST calls that read from the same DB.
@@ -588,9 +601,15 @@ function Main({ onLogout, identityKeys }) {
     const currentUserId = localStorage.getItem('userId');
 
     socket.on('connect', () => {
+      // This fires ONLY on Socket.IO auto-reconnects (not the initial
+      // connection, which is handled in handleConnectToServer directly).
+      // Reset local mute/deafen to unmuted so the UI and server stay
+      // in sync after a transient network interruption.
+      setIsMuted(false);
+      setIsDeafened(false);
       if (currentUserId) {
-        socket.emit('voice:set-muted', { userId: currentUserId, isMuted });
-        socket.emit('voice:set-deafened', { userId: currentUserId, isDeafened });
+        socket.emit('voice:set-muted', { userId: currentUserId, isMuted: false });
+        socket.emit('voice:set-deafened', { userId: currentUserId, isDeafened: false });
       }
     });
 
