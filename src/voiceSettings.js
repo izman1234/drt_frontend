@@ -15,8 +15,8 @@ export const VOICE_DEFAULTS = {
   outputVolume: 1.0,         // 0.0 – 2.0  (playback gain)
   noiseSuppression: true,
   echoCancellation: true,
-  autoGainControl: false,
-  inputGain: 1.5,            // final gain node multiplier (0.5 – 3.0)
+  autoGainControl: true,
+  inputGain: 1.0,            // final gain node multiplier (0.5 – 3.0)
   noiseGateThreshold: -40,   // dB  (–60 … –20)
 };
 

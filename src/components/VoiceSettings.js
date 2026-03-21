@@ -497,6 +497,28 @@ function VoiceSettings() {
           'Noise Suppression',
           'Reduces background noise captured by your microphone. May slightly affect voice quality.'
         )}
+        {settings.noiseSuppression && (
+          <div className="voice-slider-row voice-conditional-setting">
+            <div className="voice-slider-header">
+              <span className="voice-slider-label">Noise Gate Threshold</span>
+              <span className="voice-slider-value">{dbLabel(settings.noiseGateThreshold)}</span>
+            </div>
+            <div className="voice-slider-track">
+              <input
+                type="range"
+                className="voice-slider"
+                min="-60"
+                max="-20"
+                step="1"
+                value={settings.noiseGateThreshold}
+                onChange={(e) => handleSliderChange('noiseGateThreshold', parseInt(e.target.value, 10))}
+              />
+            </div>
+            <span className="voice-toggle-desc" style={{ marginTop: -4 }}>
+              Sounds below this level are silenced. Lower = more sensitive, higher = more aggressive gating.
+            </span>
+          </div>
+        )}
         {renderToggle(
           'echoCancellation',
           'Echo Cancellation',
@@ -526,27 +548,6 @@ function VoiceSettings() {
           </div>
           <span className="voice-toggle-desc" style={{ marginTop: -4 }}>
             Amplifies your microphone signal in software. Higher values may introduce clipping.
-          </span>
-        </div>
-
-        <div className="voice-slider-row">
-          <div className="voice-slider-header">
-            <span className="voice-slider-label">Noise Gate Threshold</span>
-            <span className="voice-slider-value">{dbLabel(settings.noiseGateThreshold)}</span>
-          </div>
-          <div className="voice-slider-track">
-            <input
-              type="range"
-              className="voice-slider"
-              min="-60"
-              max="-20"
-              step="1"
-              value={settings.noiseGateThreshold}
-              onChange={(e) => handleSliderChange('noiseGateThreshold', parseInt(e.target.value, 10))}
-            />
-          </div>
-          <span className="voice-toggle-desc" style={{ marginTop: -4 }}>
-            Sounds below this level are silenced. Lower = more sensitive, higher = more aggressive gating.
           </span>
         </div>
       </div>

@@ -129,7 +129,7 @@ export function createAudioFilters(audioContext, sourceNode, opts = {}) {
 
   // ── Final gain (software gain × inputVolume, reduced when AGC on) ─
   const gainNode = audioContext.createGain();
-  const baseGain  = IS_ELECTRON ? 2.8 : 1.5;
+  const baseGain  = IS_ELECTRON ? 1.2 : 1;
   const agcFactor = vs.autoGainControl ? 0.5 : 1.0;
   gainNode.gain.value = baseGain * vs.inputVolume * (vs.inputGain / 1.5) * agcFactor;
 
@@ -211,7 +211,7 @@ export function createRemoteAudioChain(audioContext, sourceNode, initialGain = 1
   // Electron's Chromium audio subsystem on Windows tends to output lower
   // levels than a regular browser tab, so we apply a larger boost there.
   const makeupGain = audioContext.createGain();
-  makeupGain.gain.value = IS_ELECTRON ? 1.9 : 1.4;
+  makeupGain.gain.value = IS_ELECTRON ? 1.2 : 1.0;
 
   sourceNode.connect(gainNode);
   gainNode.connect(compressor);
@@ -229,7 +229,7 @@ export function createRemoteAudioChain(audioContext, sourceNode, initialGain = 1
  * ──────────────────────────────────────────────────────────────────── */
 export function subscribeToPipelineUpdates({ filtersRef, remoteGainNodesRef, localStreamRef, audioContextRef }) {
   return onVoiceSettingsChange(async (vs) => {
-    const baseGain = IS_ELECTRON ? 2.8 : 1.5;
+    const baseGain = IS_ELECTRON ? 1.2 : 1.1;
     const userId = localStorage.getItem('userId');
     const filters = filtersRef?.current?.[userId];
 
