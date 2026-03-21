@@ -13,11 +13,11 @@ export const VOICE_DEFAULTS = {
   outputDeviceId: 'default',
   inputVolume: 1.0,          // 0.0 – 2.0  (pre-encode software gain)
   outputVolume: 1.0,         // 0.0 – 2.0  (playback gain)
-  noiseSuppression: true,
+  noiseSuppression: true,    // RNNoise AI noise suppression
   echoCancellation: true,
   autoGainControl: true,
   inputGain: 1.0,            // final gain node multiplier (0.5 – 3.0)
-  noiseGateThreshold: -40,   // dB  (–60 … –20)
+  noiseGateThreshold: -50,   // dB  (–60 … –20)
 };
 
 /** Deep-clone defaults so callers never mutate the canonical copy. */

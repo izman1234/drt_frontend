@@ -322,6 +322,13 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
     });
     audioElementsRef.current = {};
 
+    // Free RNNoise WASM resources
+    Object.values(audioFiltersRef.current).forEach(f => {
+      if (f.rnnoiseNode && f.rnnoiseNode._destroy) {
+        try { f.rnnoiseNode._destroy(); } catch (e) {}
+      }
+    });
+
     // Clear all refs
     analyserRef.current = {};
     dataArrayRef.current = {};
@@ -382,6 +389,13 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
     });
     audioElementsRef.current = {};
 
+    // Free RNNoise WASM resources
+    Object.values(audioFiltersRef.current).forEach(f => {
+      if (f.rnnoiseNode && f.rnnoiseNode._destroy) {
+        try { f.rnnoiseNode._destroy(); } catch (e) {}
+      }
+    });
+
     analyserRef.current = {};
     dataArrayRef.current = {};
     audioFiltersRef.current = {};
@@ -406,7 +420,7 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
 
       // Create fresh audio contexts — both are created HERE inside the user-
       // initiated joinVoice flow so they are NOT blocked by autoplay policy.
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
       const audioContext = audioContextRef.current;
       if (audioContext.state === 'suspended') {
         await audioContext.resume().catch(() => {});
@@ -421,7 +435,7 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
 
       // Set up audio processing chain (reading from persisted voice settings)
       const source = audioContext.createMediaStreamSource(stream);
-      const filters = createAudioFilters(audioContext, source);
+      const filters = await createAudioFilters(audioContext, source);
       const destination = audioContext.createMediaStreamDestination();
       filters.gainNode.connect(destination);
       localStreamRef.current._processedStream = destination.stream;

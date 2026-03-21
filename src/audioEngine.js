@@ -5,8 +5,8 @@
  * Responsibilities
  * ────────────────
  *  • getUserMedia with the persisted input device + WebRTC constraints
- *  • Build the Web Audio filter chain (noise gate, compressor, gain) using
- *    the persisted settings values
+ *  • Build the Web Audio filter chain using the persisted settings values
+ *  • RNNoise AI noise suppression (main-thread ScriptProcessor with WASM)
  *  • Route remote playback through gain nodes whose volume is driven by
  *    outputVolume from voiceSettings
  *  • Re-apply settings at runtime when the user tweaks a slider / toggle
@@ -14,20 +14,30 @@
  *  • Switch input/output devices on-the-fly
  */
 
+import { createRNNWasmModule } from '@jitsi/rnnoise-wasm';
 import { loadVoiceSettings, onVoiceSettingsChange } from './voiceSettings';
 
 // Detect Electron
 const IS_ELECTRON = !!(window.electron);
 
+/* ── RNNoise constants ──────────────────────────────────────────────── */
+const FRAME_SIZE = 480;   // RNNoise fixed frame size (10 ms @ 48 kHz)
+
+/* ── Module singleton ───────────────────────────────────────────────── */
+let rnnoiseModulePromise = null;
+
+/**
+ * Resolve a public asset URL that works under both
+ * `http://localhost:3000` (dev) and `file:///…/build/index.html` (prod).
+ */
+function publicUrl(filename) {
+  return new URL(`./${filename}`, window.location.href).href;
+}
+
 /* ────────────────────────────────────────────────────────────────────
  * volumeToGain — convert a linear slider value (0–2) into an
  * exponential gain value so that 200 % actually *sounds* twice as
- * loud.  Uses a power-curve: gain = v² — this maps:
- *   0 %  → 0.00   (silence)
- *  50 %  → 0.25
- * 100 %  → 1.00   (unity)
- * 150 %  → 2.25
- * 200 %  → 4.00   (+12 dB — perceptually ~2× louder)
+ * loud.  Uses a power-curve: gain = v²
  * ──────────────────────────────────────────────────────────────────── */
 export function volumeToGain(sliderValue) {
   const v = Math.max(0, sliderValue);
@@ -35,77 +45,215 @@ export function volumeToGain(sliderValue) {
 }
 
 /* ────────────────────────────────────────────────────────────────────
- * createAudioFilters — lifted from VoiceArea.js but now parameterised
- * by the persisted voice settings.
+ * Initialise the RNNoise WASM module (once, shared across all calls).
  * ──────────────────────────────────────────────────────────────────── */
-export function createAudioFilters(audioContext, sourceNode, opts = {}) {
+async function getRNNoiseModule() {
+  if (!rnnoiseModulePromise) {
+    rnnoiseModulePromise = (async () => {
+      // Pre-fetch the WASM binary from public/ — works with file:// too
+      const wasmUrl = publicUrl('rnnoise.wasm');
+      const resp = await fetch(wasmUrl);
+      if (!resp.ok) throw new Error(`Failed to fetch rnnoise.wasm: ${resp.status}`);
+      const wasmBinary = await resp.arrayBuffer();
+
+      // Initialise the Emscripten module with the pre-loaded WASM binary
+      // so it doesn't try to fetch from a potentially wrong path.
+      const module = await createRNNWasmModule({ wasmBinary });
+      module._rnnoise_init();
+      console.log('[AudioEngine] RNNoise WASM module initialised (double-pass mode)');
+      return module;
+    })();
+  }
+  return rnnoiseModulePromise;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+ * createAudioFilters — Build the full audio processing chain.
+ *
+ * Chain: source → muteGain → highPass → rnnoiseProcessor → compressor → gainNode
+ *
+ * **Async** because the RNNoise WASM module must be loaded first.
+ * ──────────────────────────────────────────────────────────────────── */
+export async function createAudioFilters(audioContext, sourceNode, opts = {}) {
   const vs = { ...loadVoiceSettings(), ...opts };
 
   // ── Mute control ──────────────────────────────────────────────────
   const muteGain = audioContext.createGain();
   muteGain.gain.value = 1;
 
-  // ── High-pass (remove low rumble) ─────────────────────────────────
+  // ── High-pass (remove low rumble < 80 Hz) ─────────────────────────
   const highPassFilter = audioContext.createBiquadFilter();
   highPassFilter.type = 'highpass';
   highPassFilter.frequency.value = 80;
   highPassFilter.Q.value = 0.7;
 
-  // ── Notch (desk-tap removal) ──────────────────────────────────────
-  const notchFilter = audioContext.createBiquadFilter();
-  notchFilter.type = 'notch';
-  notchFilter.frequency.value = 400;
-  notchFilter.Q.value = 2;
+  // ── RNNoise denoiser (ScriptProcessor, main thread) ───────────────
+  let rnnoiseNode = null;
+  try {
+    const module  = await getRNNoiseModule();
+    const state   = module._rnnoise_create(0);
+    const state2  = module._rnnoise_create(0);   // second pass for stronger suppression
+    if (!state || !state2) throw new Error('rnnoise_create returned null');
 
-  // ── Noise gate with per-sample envelope smoothing ─────────────────
-  // The gate uses a first-order IIR envelope follower computed per-
-  // sample so the gain transitions are smooth, not blocky.
-  //   Attack  ≈ 5 ms  → voice is heard almost instantly
-  //   Release ≈ 200 ms → brief pauses don't chop audio
-  const scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-  let gateThreshold = vs.noiseGateThreshold;
-  let gateBypassed = !vs.noiseSuppression;   // pass-through when NS is off
-  let gateEnvelope = 1;  // start OPEN so first speech isn't silent
+    const inPtr   = module._malloc(FRAME_SIZE * 4);
+    const outPtr  = module._malloc(FRAME_SIZE * 4);
+    if (!inPtr || !outPtr) throw new Error('malloc for RNNoise buffers failed');
 
-  const ATTACK_TC  = 0.005;  // seconds — time constant for opening
-  const RELEASE_TC = 0.200;  // seconds — time constant for closing
+    // ── Mutable settings (patched live by subscribeToPipelineUpdates) ─
+    let bypassed       = !vs.noiseSuppression;
+    let gateThresholdDb = vs.noiseGateThreshold ?? -50;
 
-  scriptProcessor.onaudioprocess = (event) => {
-    const input  = event.inputBuffer.getChannelData(0);
-    const output = event.outputBuffer.getChannelData(0);
+    // ── RMS noise gate state ─────────────────────────────────────────
+    // Simple energy-based gate applied AFTER RNNoise denoising.
+    // RNNoise removes noise from speech frames; the gate silences
+    // truly quiet periods (nobody talking).
+    let gateEnvelope = 1;   // 0 = closed, 1 = open
+    let rmsEnvelope  = 0;   // per-sample RMS tracker
 
-    // Fast pass-through when noise suppression is disabled
-    if (gateBypassed) {
-      for (let i = 0; i < input.length; i++) output[i] = input[i];
-      return;
+    // ── Ring buffers for 128↔480 cadence bridging ────────────────────
+    // Output ring pre-filled with 960 zeros (20 ms) so we never
+    // underrun — the 480/128 cadence mismatch causes ±448-sample
+    // drift that resolves every 15 buffers.
+    const RING = FRAME_SIZE * 8;              // generous capacity
+    const inRing  = new Float32Array(RING);
+    let   inW = 0, inR = 0;
+    const outRing = new Float32Array(RING);
+    let   outW = FRAME_SIZE * 2, outR = 0;   // pre-fill 960
+
+    const inAvail  = () => (inW  - inR  + RING) % RING;
+    const outAvail = () => (outW - outR + RING) % RING;
+
+    // Verify the AudioContext is 48 kHz — RNNoise will NOT work correctly
+    // at any other rate (model was trained exclusively on 48 kHz audio).
+    if (audioContext.sampleRate !== 48000) {
+      console.warn('[AudioEngine] AudioContext sampleRate is', audioContext.sampleRate,
+        '— RNNoise requires 48000 Hz!  Denoising quality will be severely degraded.');
+    } else {
+      console.log('[AudioEngine] AudioContext sampleRate: 48000 Hz ✓');
     }
 
-    // Compute RMS level for the whole buffer
-    let sum = 0;
-    for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
-    const rms = Math.sqrt(sum / input.length);
-    const db  = 20 * Math.log10(Math.max(rms, 0.00001));
+    rnnoiseNode = audioContext.createScriptProcessor(2048, 1, 1);
 
-    const targetGain = db > gateThreshold ? 1 : 0;
+    let frameCount = 0;
 
-    // Per-sample smoothing coefficients derived from time constants
-    const sr = event.inputBuffer.sampleRate || 48000;
-    const attackCoeff  = 1 - Math.exp(-1 / (ATTACK_TC  * sr));
-    const releaseCoeff = 1 - Math.exp(-1 / (RELEASE_TC * sr));
+    // ── Noise gate smoothing coefficients (constant for 48 kHz) ──────
+    const gAttack  = 1 - Math.exp(-1 / (0.005  * 48000));  // 5 ms
+    const gRelease = 1 - Math.exp(-1 / (0.200  * 48000));  // 200 ms
+    const rAttack  = 1 - Math.exp(-1 / (0.002  * 48000));  // 2 ms
+    const rRelease = 1 - Math.exp(-1 / (0.020  * 48000));  // 20 ms
 
-    for (let i = 0; i < input.length; i++) {
-      const coeff = targetGain > gateEnvelope ? attackCoeff : releaseCoeff;
-      gateEnvelope += (targetGain - gateEnvelope) * coeff;
-      output[i] = input[i] * gateEnvelope;
-    }
-  };
+    rnnoiseNode.onaudioprocess = (event) => {
+      const input  = event.inputBuffer.getChannelData(0);
+      const output = event.outputBuffer.getChannelData(0);
+      const len    = input.length;
 
-  // Live-update helpers called from subscribeToPipelineUpdates
-  scriptProcessor._setThreshold = (val) => { gateThreshold = val; };
-  scriptProcessor._setBypass    = (bypass) => {
-    gateBypassed = bypass;
-    if (bypass) gateEnvelope = 1;  // reset to open on bypass change
-  };
+      if (bypassed) {
+        output.set(input);
+        return;
+      }
+
+      // ── Push input into ring buffer ──────────────────────────────
+      for (let i = 0; i < len; i++) {
+        inRing[(inW + i) % RING] = input[i];
+      }
+      inW = (inW + len) % RING;
+
+      // ── Denoise complete 480-sample frames ───────────────────────
+      while (inAvail() >= FRAME_SIZE) {
+        const heapIn = module.HEAPF32;
+        const iOff   = inPtr >> 2;
+        for (let i = 0; i < FRAME_SIZE; i++) {
+          heapIn[iOff + i] = inRing[(inR + i) % RING] * 32768.0;
+        }
+        inR = (inR + FRAME_SIZE) % RING;
+
+        // Capture input energy BEFORE processing (double-pass overwrites inPtr)
+        const isDiagFrame = frameCount % 500 === 0 && frameCount > 0 && frameCount <= 2000;
+        let frameInEnergy = 0;
+        if (isDiagFrame) {
+          for (let j = 0; j < FRAME_SIZE; j++) {
+            frameInEnergy += heapIn[iOff + j] * heapIn[iOff + j];
+          }
+        }
+
+        // ── Double-pass RNNoise for stronger suppression ─────────
+        module._rnnoise_process_frame(state, outPtr, inPtr);
+        // Feed first-pass output back as second-pass input
+        const o1Off = outPtr >> 2;
+        for (let j = 0; j < FRAME_SIZE; j++) {
+          heapIn[iOff + j] = module.HEAPF32[o1Off + j];
+        }
+        module._rnnoise_process_frame(state2, outPtr, inPtr);
+
+        const heapOut = module.HEAPF32;
+        const oOff    = outPtr >> 2;
+
+        // ── Periodic RMS diagnostic (every ~5s) to confirm denoising ──
+        if (isDiagFrame) {
+          let outEnergy = 0;
+          for (let j = 0; j < FRAME_SIZE; j++) {
+            outEnergy += heapOut[oOff + j] * heapOut[oOff + j];
+          }
+          const inRms  = Math.sqrt(frameInEnergy / FRAME_SIZE);
+          const outRms = Math.sqrt(outEnergy / FRAME_SIZE);
+          const reductionDb = 20 * Math.log10((outRms + 1e-10) / (inRms + 1e-10));
+          console.log(`[AudioEngine] RNNoise diagnostic — inRMS=${inRms.toFixed(1)} outRMS=${outRms.toFixed(1)} reduction=${reductionDb.toFixed(1)} dB`);
+        }
+        frameCount++;
+
+        for (let i = 0; i < FRAME_SIZE; i++) {
+          let s = heapOut[oOff + i] / 32768.0;
+
+          // ── RMS energy gate (post-denoise) ─────────────────────
+          if (gateThresholdDb > -60) {        // -60 = effectively off
+            const sqr   = s * s;
+            const rCoeff = sqr > rmsEnvelope ? rAttack : rRelease;
+            rmsEnvelope += (sqr - rmsEnvelope) * rCoeff;
+
+            const rms = Math.sqrt(Math.max(rmsEnvelope, 1e-20));
+            const db  = 20 * Math.log10(rms);
+
+            const gTarget = db > gateThresholdDb ? 1 : 0;
+            const gCoeff  = gTarget > gateEnvelope ? gAttack : gRelease;
+            gateEnvelope += (gTarget - gateEnvelope) * gCoeff;
+
+            s *= gateEnvelope;
+          }
+
+          outRing[(outW + i) % RING] = s;
+        }
+        outW = (outW + FRAME_SIZE) % RING;
+      }
+
+      // ── Read denoised samples from output ring ───────────────────
+      if (outAvail() >= len) {
+        for (let i = 0; i < len; i++) {
+          output[i] = outRing[(outR + i) % RING];
+        }
+        outR = (outR + len) % RING;
+      } else {
+        // Shouldn't happen after pre-fill, but just in case
+        output.set(input);
+      }
+    };
+
+    // ── Live-update helpers ────────────────────────────────────────
+    rnnoiseNode._setBypass         = (b) => { bypassed = b; };
+    rnnoiseNode._setGateThreshold  = (v) => { gateThresholdDb = v; };
+    rnnoiseNode._destroy    = () => {
+      module._rnnoise_destroy(state);
+      module._rnnoise_destroy(state2);
+      module._free(inPtr);
+      module._free(outPtr);
+    };
+
+    console.log('[AudioEngine] RNNoise ScriptProcessor created');
+  } catch (err) {
+    console.warn('[AudioEngine] RNNoise init failed — falling back to passthrough:', err);
+    if (rnnoiseNode) { try { rnnoiseNode.disconnect(); } catch {} }
+    rnnoiseNode = audioContext.createGain();
+    rnnoiseNode.gain.value = 1;
+  }
 
   // ── Compressor — gentler when AGC is active (they overlap) ────────
   const compressor = audioContext.createDynamicsCompressor();
@@ -113,7 +261,6 @@ export function createAudioFilters(audioContext, sourceNode, opts = {}) {
   compressor.release.value = 0.15;
   const applyCompressorMode = (agcOn) => {
     if (agcOn) {
-      // AGC already manages levels; lighter limiting to avoid noise boost
       compressor.threshold.value = -6;
       compressor.knee.value       = 20;
       compressor.ratio.value      = 2;
@@ -124,7 +271,6 @@ export function createAudioFilters(audioContext, sourceNode, opts = {}) {
     }
   };
   applyCompressorMode(vs.autoGainControl);
-  // Expose so the live-update subscriber can call it
   compressor._applyAGCMode = applyCompressorMode;
 
   // ── Final gain (software gain × inputVolume, reduced when AGC on) ─
@@ -133,16 +279,14 @@ export function createAudioFilters(audioContext, sourceNode, opts = {}) {
   const agcFactor = vs.autoGainControl ? 0.5 : 1.0;
   gainNode.gain.value = baseGain * vs.inputVolume * (vs.inputGain / 1.5) * agcFactor;
 
-  // ── Connect chain — always the full path ──────────────────────────
-  // Bypassing is handled *inside* the scriptProcessor, not by rewiring.
+  // ── Connect chain ─────────────────────────────────────────────────
   sourceNode.connect(muteGain);
   muteGain.connect(highPassFilter);
-  highPassFilter.connect(notchFilter);
-  notchFilter.connect(scriptProcessor);
-  scriptProcessor.connect(compressor);
+  highPassFilter.connect(rnnoiseNode);
+  rnnoiseNode.connect(compressor);
   compressor.connect(gainNode);
 
-  return { muteGain, highPassFilter, notchFilter, scriptProcessor, compressor, gainNode };
+  return { muteGain, highPassFilter, rnnoiseNode, compressor, gainNode };
 }
 
 /* ────────────────────────────────────────────────────────────────────
@@ -154,7 +298,7 @@ export function getUserMediaConstraints(overrides = {}) {
     audio: {
       deviceId: vs.inputDeviceId !== 'default' ? { exact: vs.inputDeviceId } : undefined,
       echoCancellation: vs.echoCancellation,
-      noiseSuppression: vs.noiseSuppression,
+      noiseSuppression: true,     // Stack Chromium NS with RNNoise for stronger suppression
       autoGainControl: vs.autoGainControl,
       sampleRate: { ideal: 48000 },
       channelCount: { ideal: 1 },
@@ -178,8 +322,7 @@ export async function applyOutputDevice(audioElement) {
 }
 
 /* ────────────────────────────────────────────────────────────────────
- * applyRemoteGain — set gain on a remote peer's playback to match
- * the global outputVolume setting (clamped to 0–2).
+ * applyRemoteGain — set gain on a remote peer's playback
  * ──────────────────────────────────────────────────────────────────── */
 export function applyRemoteGain(gainNode) {
   const vs = loadVoiceSettings();
@@ -190,8 +333,7 @@ export function applyRemoteGain(gainNode) {
 
 /* ────────────────────────────────────────────────────────────────────
  * createRemoteAudioChain — build a gain + compressor/limiter chain
- * for remote peer playback.  The compressor prevents clipping when
- * the user boosts another user's volume above 100 %.
+ * for remote peer playback.
  *
  * Chain: source → gainNode → compressor → destination
  * ──────────────────────────────────────────────────────────────────── */
@@ -199,17 +341,13 @@ export function createRemoteAudioChain(audioContext, sourceNode, initialGain = 1
   const gainNode = audioContext.createGain();
   gainNode.gain.value = volumeToGain(initialGain);
 
-  // Gentle limiter to tame peaks when volume is boosted
   const compressor = audioContext.createDynamicsCompressor();
-  compressor.threshold.value = -6;   // only kick in near clipping
+  compressor.threshold.value = -6;
   compressor.knee.value = 6;
-  compressor.ratio.value = 12;       // aggressive limiting above threshold
+  compressor.ratio.value = 12;
   compressor.attack.value = 0.002;
   compressor.release.value = 0.1;
 
-  // Make-up gain so limited audio doesn't sound quieter.
-  // Electron's Chromium audio subsystem on Windows tends to output lower
-  // levels than a regular browser tab, so we apply a larger boost there.
   const makeupGain = audioContext.createGain();
   makeupGain.gain.value = IS_ELECTRON ? 1.2 : 1.0;
 
@@ -222,26 +360,25 @@ export function createRemoteAudioChain(audioContext, sourceNode, initialGain = 1
 }
 
 /* ────────────────────────────────────────────────────────────────────
- * liveUpdate — call from VoiceArea to subscribe to settings changes
- * and patch the running audio pipeline in real-time.
+ * liveUpdate — subscribe to settings changes and patch the running
+ * audio pipeline in real-time.
  *
  * Returns an unsubscribe function.
  * ──────────────────────────────────────────────────────────────────── */
 export function subscribeToPipelineUpdates({ filtersRef, remoteGainNodesRef, localStreamRef, audioContextRef }) {
   return onVoiceSettingsChange(async (vs) => {
-    const baseGain = IS_ELECTRON ? 1.2 : 1.1;
+    const baseGain = IS_ELECTRON ? 1.2 : 1;
     const userId = localStorage.getItem('userId');
     const filters = filtersRef?.current?.[userId];
 
-    // ── 1. Apply WebRTC track constraints live (EC / NS / AGC) ──────
-    //    This makes toggles take effect immediately during a call.
+    // ── 1. Apply WebRTC track constraints live (EC / AGC) ────────────
     if (localStreamRef?.current) {
       const track = localStreamRef.current.getAudioTracks()[0];
       if (track && track.readyState === 'live') {
         try {
           await track.applyConstraints({
             echoCancellation: vs.echoCancellation,
-            noiseSuppression: vs.noiseSuppression,
+            noiseSuppression: true,               // Stack with RNNoise
             autoGainControl:  vs.autoGainControl,
           });
           console.log('[AudioEngine] Track constraints applied live');
@@ -253,13 +390,13 @@ export function subscribeToPipelineUpdates({ filtersRef, remoteGainNodesRef, loc
 
     // ── 2. Patch the Web Audio filter chain in-place ─────────────────
     if (filters) {
-      // Noise gate: toggle bypass and update threshold
-      if (filters.scriptProcessor) {
-        if (filters.scriptProcessor._setBypass) {
-          filters.scriptProcessor._setBypass(!vs.noiseSuppression);
+      // RNNoise: toggle bypass and noise gate threshold
+      if (filters.rnnoiseNode) {
+        if (filters.rnnoiseNode._setBypass) {
+          filters.rnnoiseNode._setBypass(!vs.noiseSuppression);
         }
-        if (filters.scriptProcessor._setThreshold) {
-          filters.scriptProcessor._setThreshold(vs.noiseGateThreshold);
+        if (filters.rnnoiseNode._setGateThreshold) {
+          filters.rnnoiseNode._setGateThreshold(vs.noiseGateThreshold ?? -50);
         }
       }
 
@@ -268,7 +405,7 @@ export function subscribeToPipelineUpdates({ filtersRef, remoteGainNodesRef, loc
         filters.compressor._applyAGCMode(vs.autoGainControl);
       }
 
-      // Final gain (reduced when AGC is on to prevent noise amplification)
+      // Final gain (reduced when AGC is on)
       if (filters.gainNode) {
         try {
           const agcFactor = vs.autoGainControl ? 0.5 : 1.0;

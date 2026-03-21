@@ -3,7 +3,9 @@ import {
   loadVoiceSettings,
   updateVoiceSettings,
   resetVoiceSettings,
+  onVoiceSettingsChange,
 } from '../voiceSettings';
+import { createAudioFilters } from '../audioEngine';
 import Twemoji from './Twemoji';
 import './VoiceSettings.css';
 
@@ -22,9 +24,6 @@ function useDebouncedCallback(fn, delay) {
 /** Format 0-2 float as "0 – 200 %" label. */
 const pct = (v) => `${Math.round(v * 100)}%`;
 
-/** Format dB threshold for display. */
-const dbLabel = (v) => `${v} dB`;
-
 /* ── Component ─────────────────────────────────────────────────────── */
 
 function VoiceSettings() {
@@ -38,11 +37,7 @@ function VoiceSettings() {
   // ── Mic test state ──────────────────────────────────────────────
   const [micTestActive, setMicTestActive] = useState(false);
   const [micLevel, setMicLevel] = useState(0);
-  const [loopbackActive, setLoopbackActive] = useState(false);
-  const [recordedBlob, setRecordedBlob] = useState(null);
-  const [isPlayingBack, setIsPlayingBack] = useState(false);
   const [testError, setTestError] = useState('');
-  const [recordingTime, setRecordingTime] = useState(0);
 
   // ── Permission state ────────────────────────────────────────────
   const [micPermission, setMicPermission] = useState('prompt'); // granted | denied | prompt
@@ -54,13 +49,9 @@ function VoiceSettings() {
   const testStreamRef = useRef(null);
   const testAudioCtxRef = useRef(null);
   const testAnalyserRef = useRef(null);
-  const testGainRef = useRef(null);
+  const testFiltersRef = useRef(null);
   const loopbackGainRef = useRef(null);
   const meterRAFRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
-  const recordedChunksRef = useRef([]);
-  const playbackAudioRef = useRef(null);
-  const recordingTimerRef = useRef(null);
 
   /* ── Enumerate devices ───────────────────────────────────────────── */
   const enumerateDevices = useCallback(async () => {
@@ -156,20 +147,73 @@ function VoiceSettings() {
     setDeviceWarning('');
   };
 
+  /* ── Live-patch mic test pipeline when settings change ────────────── */
+  useEffect(() => {
+    if (!micTestActive) return;
+
+    const IS_ELECTRON = !!(window.electron);
+    const baseGain = IS_ELECTRON ? 1.2 : 1;
+
+    const unsub = onVoiceSettingsChange(async (vs) => {
+      const filters = testFiltersRef.current;
+
+      // 1. Apply track constraints live (EC / AGC)
+      if (testStreamRef.current) {
+        const track = testStreamRef.current.getAudioTracks()[0];
+        if (track && track.readyState === 'live') {
+          try {
+            await track.applyConstraints({
+              echoCancellation: vs.echoCancellation,
+              noiseSuppression: true,
+              autoGainControl: vs.autoGainControl,
+            });
+          } catch (e) {
+            console.warn('[VoiceSettings] applyConstraints failed:', e);
+          }
+        }
+      }
+
+      // 2. Patch the filter chain in-place
+      if (filters) {
+        // RNNoise: toggle bypass and noise gate
+        if (filters.rnnoiseNode) {
+          if (filters.rnnoiseNode._setBypass) {
+            filters.rnnoiseNode._setBypass(!vs.noiseSuppression);
+          }
+          if (filters.rnnoiseNode._setGateThreshold) {
+            filters.rnnoiseNode._setGateThreshold(vs.noiseGateThreshold ?? -50);
+          }
+        }
+
+        // Compressor: adapt to AGC mode
+        if (filters.compressor && filters.compressor._applyAGCMode) {
+          filters.compressor._applyAGCMode(vs.autoGainControl);
+        }
+
+        // Final gain
+        if (filters.gainNode) {
+          try {
+            const agcFactor = vs.autoGainControl ? 0.5 : 1.0;
+            filters.gainNode.gain.value = baseGain * vs.inputVolume * (vs.inputGain / 1.5) * agcFactor;
+          } catch {}
+        }
+      }
+    });
+
+    return unsub;
+  }, [micTestActive]);
+
   /* ── Mic test ────────────────────────────────────────────────────── */
 
   const startMicTest = async () => {
     setTestError('');
-    setRecordedBlob(null);
-    setRecordingTime(0);
-    recordedChunksRef.current = [];
 
     try {
       const constraints = {
         audio: {
           deviceId: settings.inputDeviceId !== 'default' ? { exact: settings.inputDeviceId } : undefined,
           echoCancellation: settings.echoCancellation,
-          noiseSuppression: settings.noiseSuppression,
+          noiseSuppression: true,     // Always stack Chromium NS with RNNoise
           autoGainControl: settings.autoGainControl,
           sampleRate: { ideal: 48000 },
         },
@@ -179,63 +223,38 @@ function VoiceSettings() {
       testStreamRef.current = stream;
 
       // Audio context
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
       if (ctx.state === 'suspended') await ctx.resume();
       testAudioCtxRef.current = ctx;
 
       const source = ctx.createMediaStreamSource(stream);
 
-      // Input gain
-      const gain = ctx.createGain();
-      gain.gain.value = settings.inputVolume * settings.inputGain;
-      testGainRef.current = gain;
-      source.connect(gain);
+      // ── Run through the FULL audio processing pipeline ────────────
+      // This is the same chain used in live voice chat so the test mic
+      // sounds exactly like what other participants would hear.
+      const filters = await createAudioFilters(ctx, source);
+      testFiltersRef.current = filters;
 
-      // Analyser for level meter
+      // The last node in the pipeline is filters.gainNode
+      const pipelineOutput = filters.gainNode;
+
+      // Analyser for level meter — reads the processed signal
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
-      gain.connect(analyser);
+      pipelineOutput.connect(analyser);
       testAnalyserRef.current = analyser;
 
-      // Loopback gain (initially 0)
+      // Loopback — always active so the user hears exactly what others
+      // would hear through the full processing pipeline.
       const loopback = ctx.createGain();
-      loopback.gain.value = loopbackActive ? 0.8 : 0;
-      gain.connect(loopback);
+      loopback.gain.value = 0.8;
+      pipelineOutput.connect(loopback);
       loopback.connect(ctx.destination);
       loopbackGainRef.current = loopback;
-
-      // MediaRecorder for recording test (up to 5 seconds)
-      try {
-        const recorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) recordedChunksRef.current.push(e.data);
-        };
-        recorder.onstop = () => {
-          if (recordedChunksRef.current.length > 0) {
-            const blob = new Blob(recordedChunksRef.current, { type: 'audio/webm' });
-            setRecordedBlob(blob);
-          }
-        };
-        recorder.start();
-        mediaRecorderRef.current = recorder;
-      } catch (recErr) {
-        console.warn('[VoiceSettings] MediaRecorder not supported:', recErr);
-      }
 
       setMicTestActive(true);
       setMicPermission('granted');
       enumerateDevices(); // Re-enumerate to get friendly names after permission grant
-
-      // Start recording timer; auto-stop at 5 seconds
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingTime(prev => {
-          if (prev >= 5) {
-            stopMicTest();
-            return 5;
-          }
-          return prev + 1;
-        });
-      }, 1000);
 
       // Level meter animation
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
@@ -264,22 +283,15 @@ function VoiceSettings() {
   };
 
   const stopMicTest = () => {
-    // Stop recording timer
-    if (recordingTimerRef.current) {
-      clearInterval(recordingTimerRef.current);
-      recordingTimerRef.current = null;
-    }
-
-    // Stop MediaRecorder
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try { mediaRecorderRef.current.stop(); } catch {}
-    }
-    mediaRecorderRef.current = null;
-
     // Stop animation frame
     if (meterRAFRef.current) {
       cancelAnimationFrame(meterRAFRef.current);
       meterRAFRef.current = null;
+    }
+
+    // Free RNNoise WASM resources before closing AudioContext
+    if (testFiltersRef.current?.rnnoiseNode?._destroy) {
+      try { testFiltersRef.current.rnnoiseNode._destroy(); } catch {}
     }
 
     // Close audio context and stream
@@ -288,7 +300,7 @@ function VoiceSettings() {
     }
     testAudioCtxRef.current = null;
     testAnalyserRef.current = null;
-    testGainRef.current = null;
+    testFiltersRef.current = null;
     loopbackGainRef.current = null;
 
     if (testStreamRef.current) {
@@ -298,56 +310,7 @@ function VoiceSettings() {
 
     setMicTestActive(false);
     setMicLevel(0);
-    setLoopbackActive(false);
   };
-
-  const toggleLoopback = () => {
-    const newVal = !loopbackActive;
-    setLoopbackActive(newVal);
-    if (loopbackGainRef.current) {
-      loopbackGainRef.current.gain.value = newVal ? 0.8 : 0;
-    }
-  };
-
-  const playRecording = async () => {
-    if (!recordedBlob) return;
-    setIsPlayingBack(true);
-    try {
-      const url = URL.createObjectURL(recordedBlob);
-      const audio = new Audio(url);
-      playbackAudioRef.current = audio;
-
-      // Try to set output device if supported
-      if (audio.setSinkId && settings.outputDeviceId !== 'default') {
-        try {
-          await audio.setSinkId(settings.outputDeviceId);
-        } catch (e) {
-          console.warn('[VoiceSettings] setSinkId failed:', e);
-        }
-      }
-
-      audio.volume = Math.min(settings.outputVolume, 1.0);
-      audio.onended = () => {
-        setIsPlayingBack(false);
-        URL.revokeObjectURL(url);
-      };
-      audio.onerror = () => {
-        setIsPlayingBack(false);
-        URL.revokeObjectURL(url);
-      };
-      await audio.play();
-    } catch (e) {
-      console.error('[VoiceSettings] playback error:', e);
-      setIsPlayingBack(false);
-    }
-  };
-
-  // Update loopback / gain in real-time when settings change during test
-  useEffect(() => {
-    if (testGainRef.current) {
-      testGainRef.current.gain.value = settings.inputVolume * settings.inputGain;
-    }
-  }, [settings.inputVolume, settings.inputGain]);
 
   /* ── Render helpers ──────────────────────────────────────────────── */
 
@@ -494,14 +457,14 @@ function VoiceSettings() {
 
         {renderToggle(
           'noiseSuppression',
-          'Noise Suppression',
-          'Reduces background noise captured by your microphone. May slightly affect voice quality.'
+          'AI Noise Suppression',
+          'Uses an AI model (RNNoise) to remove background noise, keyboard clicks, and other non-speech sounds in real-time.'
         )}
         {settings.noiseSuppression && (
           <div className="voice-slider-row voice-conditional-setting">
             <div className="voice-slider-header">
               <span className="voice-slider-label">Noise Gate Threshold</span>
-              <span className="voice-slider-value">{dbLabel(settings.noiseGateThreshold)}</span>
+              <span className="voice-slider-value">{settings.noiseGateThreshold} dB</span>
             </div>
             <div className="voice-slider-track">
               <input
@@ -515,7 +478,7 @@ function VoiceSettings() {
               />
             </div>
             <span className="voice-toggle-desc" style={{ marginTop: -4 }}>
-              Sounds below this level are silenced. Lower = more sensitive, higher = more aggressive gating.
+              Sounds below this level are silenced after AI denoising. Lower = more sensitive, higher = more aggressive gating. Set to -60 dB to disable.
             </span>
           </div>
         )}
@@ -569,56 +532,26 @@ function VoiceSettings() {
                 <Twemoji emoji="⏹" size={16} /> Stop Test
               </button>
             )}
-
-            {micTestActive && (
-              <button
-                className={`voice-test-btn loopback${loopbackActive ? ' active' : ''}`}
-                onClick={toggleLoopback}
-                title="Route your microphone to your speakers so you can hear yourself. Use headphones to avoid feedback!"
-              >
-                {loopbackActive ? <><Twemoji emoji="🔊" size={16} /> Loopback On</> : <><Twemoji emoji="🔇" size={16} /> Loopback Off</>}
-              </button>
-            )}
-
-            {recordedBlob && !micTestActive && (
-              <button
-                className="voice-test-btn playback"
-                onClick={playRecording}
-                disabled={isPlayingBack}
-              >
-                {isPlayingBack ? <><Twemoji emoji="▶️" size={16} /> Playing...</> : <><Twemoji emoji="▶️" size={16} /> Play Recording</>}
-              </button>
-            )}
           </div>
 
           {micTestActive && (
             <>
               <div className="voice-test-status recording">
                 <span className="voice-test-dot" />
-                Recording… {recordingTime}s / 5s
+                Listening — you'll hear yourself through the full audio pipeline
               </div>
               {renderMeter(micLevel)}
+              <div className="voice-warning warn">
+                <span className="voice-warning-icon"><Twemoji emoji="🎧" size={16} /></span>
+                <span>Use headphones to avoid audio feedback!</span>
+              </div>
             </>
-          )}
-
-          {loopbackActive && micTestActive && (
-            <div className="voice-warning warn">
-              <span className="voice-warning-icon"><Twemoji emoji="⚠️" size={16} /></span>
-              <span>Loopback is active — use headphones to avoid audio feedback!</span>
-            </div>
           )}
 
           {testError && (
             <div className="voice-warning error">
               <span className="voice-warning-icon"><Twemoji emoji="❌" size={16} /></span>
               <span>{testError}</span>
-            </div>
-          )}
-
-          {!micTestActive && !testError && recordedBlob && (
-            <div className="voice-warning success">
-              <span className="voice-warning-icon"><Twemoji emoji="✅" size={16} /></span>
-              <span>Recording captured successfully. Click "Play Recording" to hear yourself.</span>
             </div>
           )}
         </div>
