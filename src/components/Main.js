@@ -646,6 +646,41 @@ function Main({ onLogout, identityKeys }) {
       loadChannels();
     });
 
+    // Server broadcast messages from the admin console
+    socket.on('server:broadcast', ({ message }) => {
+      showModal(message, { title: 'Server Broadcast', type: 'alert' });
+    });
+
+    // Kicked by the admin — show reason and disconnect
+    socket.on('server:kicked', ({ reason }) => {
+      socket.disconnect();
+      setSocket(null);
+      setConnectedServer(null);
+      setChannels([]);
+      setMessages([]);
+      setSelectedChannel(null);
+      setUsers([]);
+      setVoiceMembersByChannel({});
+      setActiveVoiceChannel(null);
+      setUnreadChannels(new Set());
+      showModal(reason || 'You were disconnected by the server administrator.', { title: 'Disconnected', type: 'alert' });
+    });
+
+    // Server config updated (e.g. name/icon changed via /reload)
+    socket.on('server:config-update', ({ name, icon }) => {
+      setConnectedServer(prev => {
+        if (!prev) return prev;
+        const updated = { ...prev, name: name || prev.name, icon: icon !== undefined ? icon : prev.icon };
+        // Persist to saved server list
+        const updatedServers = getSavedServers().map(s =>
+          s.id === prev.id ? { ...s, name: updated.name, icon: updated.icon } : s
+        );
+        saveServerList(updatedServers);
+        setServers(updatedServers);
+        return updated;
+      });
+    });
+
     return () => {
       socket.disconnect();
     };
