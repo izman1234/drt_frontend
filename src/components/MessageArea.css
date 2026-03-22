@@ -44,6 +44,29 @@
   font-size: 16px;
 }
 
+/* Day separator */
+.day-separator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 4px;
+  user-select: none;
+}
+
+.day-separator-line {
+  flex: 1;
+  height: 1px;
+  background: #3a2554;
+}
+
+.day-separator-label {
+  color: #a78bba;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+
 .message {
   display: flex;
   gap: 12px;

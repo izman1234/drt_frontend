@@ -19,6 +19,33 @@ function parseTimestamp(ts) {
   return new Date(ts);
 }
 
+// Returns a local-midnight Date for the given Date, used for day comparisons
+function toLocalDateOnly(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+// Format a message timestamp as "Today at ...", "Yesterday at ...", or "MM/DD/YYYY HH:MM AM/PM"
+function formatMessageTimestamp(date) {
+  const now = new Date();
+  const todayMidnight = toLocalDateOnly(now);
+  const msgDay = toLocalDateOnly(date);
+  const diffMs = todayMidnight.getTime() - msgDay.getTime();
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+  const timeStr = date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  if (diffDays === 0) return `Today at ${timeStr}`;
+  if (diffDays === 1) return `Yesterday at ${timeStr}`;
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  const dd = String(date.getDate()).padStart(2, '0');
+  const yyyy = date.getFullYear();
+  return `${mm}/${dd}/${yyyy} ${timeStr}`;
+}
+
+// Format a date for the day separator label (e.g. "March 21, 2026")
+function formatDaySeparatorLabel(date) {
+  return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
 const EMOJI_CATEGORIES = {
   smileys: {
     name: 'Smileys',
@@ -120,6 +147,26 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
   const justSwitchedChannelRef = useRef(false);
   const inputContainerHeightRef = useRef(0);
   const lastDistanceFromBottomRef = useRef(0);
+
+  // Midnight rollover: this counter increments when the calendar day changes,
+  // forcing a re-render so "Today" / "Yesterday" labels stay accurate even if
+  // the app is left running for multiple days.
+  const [, setDayTick] = useState(0);
+  useEffect(() => {
+    const scheduleNextMidnight = () => {
+      const now = new Date();
+      const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+      const msUntilMidnight = tomorrow.getTime() - now.getTime() + 500; // +500ms buffer
+      return setTimeout(() => {
+        setDayTick(t => t + 1);
+        // Re-schedule for the next midnight
+        timerRef.current = scheduleNextMidnight();
+      }, msUntilMidnight);
+    };
+    const timerRef = { current: null };
+    timerRef.current = scheduleNextMidnight();
+    return () => clearTimeout(timerRef.current);
+  }, []);
 
   const handleSend = () => {
     if (inputValue.trim() || imagePreview) {
@@ -744,12 +791,24 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
         {messages.length === 0 ? (
           <div className="no-messages">No messages yet. Start the conversation!</div>
         ) : (
-          messages.map(message => {
+          messages.map((message, index) => {
             const profilePicture = getProfilePicture(message);
             const isEditing = editingMessageId === message.id;
+            const msgDate = parseTimestamp(message.createdAt);
+            const msgDay = toLocalDateOnly(msgDate);
+            const prevMsg = index > 0 ? messages[index - 1] : null;
+            const prevDay = prevMsg ? toLocalDateOnly(parseTimestamp(prevMsg.createdAt)) : null;
+            const showDaySeparator = !prevDay || msgDay.getTime() !== prevDay.getTime();
             return (
+              <React.Fragment key={message.id}>
+                {showDaySeparator && (
+                  <div className="day-separator">
+                    <div className="day-separator-line" />
+                    <span className="day-separator-label">{formatDaySeparatorLabel(msgDate)}</span>
+                    <div className="day-separator-line" />
+                  </div>
+                )}
               <div
-                key={message.id}
                 data-message-id={message.id}
                 className={`message ${message.userId === currentUserId ? 'own-message' : ''}`}
                 onContextMenu={(e) => handleMessageRightClick(e, message)}
@@ -765,7 +824,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                   <div className="message-header">
                     <span className="message-author" style={{ color: normalizeNameColor(message.nameColor) }}>{message.displayName || message.username}</span>
                     <span className="message-time">
-                      {parseTimestamp(message.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatMessageTimestamp(msgDate)}
                       {message.edited_at && <span className="message-edited"> (edited)</span>}
                     </span>
                   </div>
@@ -934,6 +993,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                   </div>
                 </div>
               </div>
+              </React.Fragment>
             );
           })
         )}
