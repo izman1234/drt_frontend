@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { channelAPI, messageAPI, userAPI, reactionAPI, identityAPI, setServerUrl, fetchServerInfo, resolveServerUrl } from '../api';
 import { signData, createMessageSigningPayload, createBackupBlob, signChallenge, toBase64 } from '../crypto';
 import io from 'socket.io-client';
@@ -11,6 +11,7 @@ import ColorPicker from './ColorPicker';
 import ServerList from './ServerList';
 import CustomModal from './CustomModal';
 import VoiceSettings from './VoiceSettings';
+import ProfileModal from './ProfileModal';
 import Twemoji from './Twemoji';
 import './Main.css';
 
@@ -41,11 +42,10 @@ function Main({ onLogout, identityKeys }) {
   const [userNameColor, setUserNameColor] = useState(localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba');
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState('user');
-  const [settingsForm, setSettingsForm] = useState({ displayName: localStorage.getItem(`drt_displayName_${accountKey}`) || localStorage.getItem('drt_displayName') || 'User', nameColor: localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba' });
+  const [settingsForm, setSettingsForm] = useState({ displayName: localStorage.getItem(`drt_displayName_${accountKey}`) || localStorage.getItem('drt_displayName') || 'User', nameColor: localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba', bio: localStorage.getItem(`drt_bio_${accountKey}`) || '' });
   const [profilePicture, setProfilePicture] = useState(localStorage.getItem(`drt_profilePicture_${accountKey}`) || null);
   const [showImageCropper, setShowImageCropper] = useState(false);
   const [imageDataToEdit, setImageDataToEdit] = useState(null);
-  const [pendingProfilePicture, setPendingProfilePicture] = useState(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
@@ -55,8 +55,11 @@ function Main({ onLogout, identityKeys }) {
   const [userMutes, setUserMutes] = useState({}); // { userId: boolean }
   const [unreadChannels, setUnreadChannels] = useState(new Set()); // Set of channel IDs with unread messages
   const [mentionCounts, setMentionCounts] = useState({}); // { channelId: number }
-  const [typingUsers, setTypingUsers] = useState({}); // { channelId: { userId: { displayName, timeout } } }
-  const typingTimeoutsRef = useRef({}); // track timeout IDs for cleanup
+  const [typingUsers, setTypingUsers] = useState({}); // { "channelId:userId": { channelId, userId, displayName } }
+  const [profileModalUser, setProfileModalUser] = useState(null);
+  const [profileModalPosition, setProfileModalPosition] = useState(null);
+  const [showProfilePreview, setShowProfilePreview] = useState(false);
+  const typingTimersRef = useRef({});
   const [serverBackupEnabled, setServerBackupEnabled] = useState(
     localStorage.getItem('drt_serverBackup') !== 'false'
   );
@@ -217,7 +220,7 @@ function Main({ onLogout, identityKeys }) {
     setVoiceMembersByChannel({});
     setActiveVoiceChannel(null);
     setUnreadChannels(new Set());
-    setConnectingServer(true);
+    setTypingUsers({});
     setServerError('');
 
     try {
@@ -675,6 +678,7 @@ function Main({ onLogout, identityKeys }) {
       setVoiceMembersByChannel({});
       setActiveVoiceChannel(null);
       setUnreadChannels(new Set());
+      setTypingUsers({});
       showModal(reason || 'You were disconnected by the server administrator.', { title: 'Disconnected', type: 'alert' });
     });
 
@@ -691,6 +695,26 @@ function Main({ onLogout, identityKeys }) {
         setServers(updatedServers);
         return updated;
       });
+    });
+
+    // Typing indicator: track who is typing per channel
+    socket.on('typing:start', ({ channelId: typingChannelId, userId: typingUserId, displayName }) => {
+      if (!typingChannelId || !typingUserId) return;
+      const key = `${typingChannelId}:${typingUserId}`;
+      setTypingUsers(prev => ({
+        ...prev,
+        [key]: { channelId: typingChannelId, userId: typingUserId, displayName }
+      }));
+      // Clear after 3s of no new typing event
+      if (typingTimersRef.current[key]) clearTimeout(typingTimersRef.current[key]);
+      typingTimersRef.current[key] = setTimeout(() => {
+        setTypingUsers(prev => {
+          const next = { ...prev };
+          delete next[key];
+          return next;
+        });
+        delete typingTimersRef.current[key];
+      }, 3000);
     });
 
     return () => {
@@ -781,21 +805,17 @@ function Main({ onLogout, identityKeys }) {
     // Listen for new messages and add them to the current channel
     const handleMessageCreated = ({ channelId, message }) => {
       console.log('New message received:', message);
-      // Clear typing indicator for this user when their message arrives
-      if (message.userId) {
-        const key = `${channelId}_${message.userId}`;
-        if (typingTimeoutsRef.current[key]) clearTimeout(typingTimeoutsRef.current[key]);
-        delete typingTimeoutsRef.current[key];
-        setTypingUsers(prev => {
-          const ch = { ...(prev[channelId] || {}) };
-          delete ch[message.userId];
-          if (Object.keys(ch).length === 0) {
-            const { [channelId]: _, ...rest } = prev;
-            return rest;
-          }
-          return { ...prev, [channelId]: ch };
-        });
-      }
+
+      // Clear typing indicator for sender
+      const key = `${channelId}:${message.userId}`;
+      if (typingTimersRef.current[key]) clearTimeout(typingTimersRef.current[key]);
+      delete typingTimersRef.current[key];
+      setTypingUsers(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+
       if (selectedChannel && selectedChannel.id === channelId) {
         setMessages(prevMessages => {
           // Check if message already exists to prevent duplicates
@@ -814,13 +834,14 @@ function Main({ onLogout, identityKeys }) {
             next.add(channelId);
             return next;
           });
-        }
-      }
-      // Track mention counts for channels we're not currently viewing
-      const myUserId = localStorage.getItem('userId');
-      if (message.userId !== myUserId && message.content && message.content.includes(`<@${myUserId}>`)) {
-        if (!selectedChannel || selectedChannel.id !== channelId) {
-          setMentionCounts(prev => ({ ...prev, [channelId]: (prev[channelId] || 0) + 1 }));
+          // Track @mention count
+          const myId = localStorage.getItem('userId');
+          if (myId && message.content && message.content.includes(`<@${myId}>`)) {
+            setMentionCounts(prev => ({
+              ...prev,
+              [channelId]: (prev[channelId] || 0) + 1
+            }));
+          }
         }
       }
     };
@@ -877,38 +898,12 @@ function Main({ onLogout, identityKeys }) {
       );
     };
 
-    const handleTypingStart = ({ channelId, userId, displayName }) => {
-      if (!channelId || !userId) return;
-      setTypingUsers(prev => {
-        const channel = { ...(prev[channelId] || {}) };
-        // Clear any existing timeout for this user
-        const key = `${channelId}_${userId}`;
-        if (typingTimeoutsRef.current[key]) clearTimeout(typingTimeoutsRef.current[key]);
-        // Set timeout to remove after 3 seconds
-        typingTimeoutsRef.current[key] = setTimeout(() => {
-          setTypingUsers(p => {
-            const ch = { ...(p[channelId] || {}) };
-            delete ch[userId];
-            if (Object.keys(ch).length === 0) {
-              const { [channelId]: _, ...rest } = p;
-              return rest;
-            }
-            return { ...p, [channelId]: ch };
-          });
-          delete typingTimeoutsRef.current[key];
-        }, 3000);
-        channel[userId] = { displayName };
-        return { ...prev, [channelId]: channel };
-      });
-    };
-
     socket.on('message:created', handleMessageCreated);
     socket.on('message:updated', handleMessageUpdated);
     socket.on('message:deleted', handleMessageDeleted);
     socket.on('user:nameColor-updated', handleUserNameColorUpdated);
     socket.on('reaction:added', handleReactionAdded);
     socket.on('reaction:removed', handleReactionRemoved);
-    socket.on('typing:start', handleTypingStart);
 
     return () => {
       socket.off('message:created', handleMessageCreated);
@@ -917,7 +912,6 @@ function Main({ onLogout, identityKeys }) {
       socket.off('user:nameColor-updated', handleUserNameColorUpdated);
       socket.off('reaction:added', handleReactionAdded);
       socket.off('reaction:removed', handleReactionRemoved);
-      socket.off('typing:start', handleTypingStart);
     };
   }, [socket, selectedChannel]);
 
@@ -981,6 +975,10 @@ function Main({ onLogout, identityKeys }) {
       const response = await userAPI.getProfile();
       if (response.data.success) {
         setUsername(response.data.user.username);
+        if (response.data.user.bio != null) {
+          localStorage.setItem(`drt_bio_${accountKey}`, response.data.user.bio);
+          setSettingsForm(prev => ({ ...prev, bio: response.data.user.bio }));
+        }
       }
     } catch (error) {
       console.error('Error loading profile:', error);
@@ -1005,8 +1003,9 @@ function Main({ onLogout, identityKeys }) {
       return next;
     });
     setMentionCounts(prev => {
-      const { [channelId]: _, ...rest } = prev;
-      return rest;
+      const next = { ...prev };
+      delete next[channelId];
+      return next;
     });
     try {
       await channelAPI.markChannelRead(channelId);
@@ -1101,7 +1100,7 @@ function Main({ onLogout, identityKeys }) {
     if (!selectedChannel) return;
     try {
       const content = (messageData.text || '').trim() ? messageData.text : '';
-      const images = messageData.images && messageData.images.length > 0 ? messageData.images : null;
+      const images = messageData.images ? messageData.images : null;
       const replyTo = messageData.replyTo || null;
       
       // Ensure we have either content or images
@@ -1161,6 +1160,16 @@ function Main({ onLogout, identityKeys }) {
     setActiveVoiceChannel(null);
   };
 
+  const closeSettings = () => {
+    setSettingsForm({
+      displayName: userDisplayName,
+      nameColor: localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba',
+      bio: localStorage.getItem(`drt_bio_${accountKey}`) || '',
+      profilePicture: undefined,
+    });
+    setShowSettings(false);
+  };
+
   const handleSaveSettings = async () => {
     try {
       // Always persist locally first
@@ -1187,6 +1196,26 @@ function Main({ onLogout, identityKeys }) {
         // Sync to server only if connected
         if (connectedServer) {
           await userAPI.updateNameColor(settingsForm.nameColor);
+        }
+      }
+
+      const savedBio = localStorage.getItem(`drt_bio_${accountKey}`) || '';
+      if (settingsForm.bio !== savedBio) {
+        localStorage.setItem(`drt_bio_${accountKey}`, settingsForm.bio);
+
+        if (connectedServer) {
+          await userAPI.updateBio(settingsForm.bio);
+        }
+      }
+
+      // Save profile picture if changed
+      if (settingsForm.profilePicture !== undefined) {
+        setProfilePicture(settingsForm.profilePicture);
+        localStorage.setItem(`drt_profilePicture_${accountKey}`, settingsForm.profilePicture);
+        if (connectedServer) {
+          userAPI.updateProfilePicture(settingsForm.profilePicture).catch(err =>
+            console.error('Failed to save profile picture to backend:', err)
+          );
         }
       }
       
@@ -1270,7 +1299,7 @@ function Main({ onLogout, identityKeys }) {
   };
 
   const handleImageCropComplete = (croppedImage) => {
-    setPendingProfilePicture(croppedImage);
+    setSettingsForm(prev => ({ ...prev, profilePicture: croppedImage }));
     setShowImageCropper(false);
     setImageDataToEdit(null);
   };
@@ -1600,10 +1629,10 @@ function Main({ onLogout, identityKeys }) {
       {/* ── Settings Modal (always accessible) ─────────────────────── */}
       {showSettings && (
         <>
-          <div className="settings-backdrop" onClick={() => { setPendingProfilePicture(null); setSettingsForm({ displayName: userDisplayName, nameColor: userNameColor }); setShowSettings(false); }} />
+          <div className="settings-backdrop" onClick={closeSettings} />
           <div className="settings-modal-container">
             <div className="settings-modal-content">
-              <button className="settings-modal-close" onClick={() => { setPendingProfilePicture(null); setSettingsForm({ displayName: userDisplayName, nameColor: userNameColor }); setShowSettings(false); }}>×</button>
+              <button className="settings-modal-close" onClick={closeSettings}>×</button>
 
               <div className="settings-modal-layout">
                 <div className="settings-tab-sidebar">
@@ -1639,10 +1668,11 @@ function Main({ onLogout, identityKeys }) {
                 <div className="settings-tab-content">
                   {settingsTab === 'user' && (
                     <>
+                      <div className="settings-tab-content-scrollable">
                       <div className="settings-profile-section">
                         <div className="settings-avatar">
-                          {(pendingProfilePicture || profilePicture) ? (
-                            <img src={pendingProfilePicture || profilePicture} alt="Profile" />
+                          {(settingsForm.profilePicture !== undefined ? settingsForm.profilePicture : profilePicture) ? (
+                            <img src={settingsForm.profilePicture !== undefined ? settingsForm.profilePicture : profilePicture} alt="Profile" />
                           ) : (
                             <div className="settings-avatar-placeholder">{userDisplayName.charAt(0).toUpperCase()}</div>
                           )}
@@ -1696,9 +1726,27 @@ function Main({ onLogout, identityKeys }) {
                         </div>
                       </div>
 
+                      <div className="settings-form-section">
+                        <label className="settings-label">About Me</label>
+                        <textarea
+                          value={settingsForm.bio}
+                          onChange={(e) => setSettingsForm({ ...settingsForm, bio: e.target.value.slice(0, 500) })}
+                          className="settings-input"
+                          placeholder="Tell others about yourself"
+                          rows={3}
+                          maxLength={500}
+                          style={{ resize: 'vertical', minHeight: '60px' }}
+                        />
+                      </div>
+
+                      </div>
+
                       <div className="settings-actions">
                         <button onClick={handleSaveSettings} className="settings-save-btn">
                           Save Changes
+                        </button>
+                        <button onClick={() => setShowProfilePreview(true)} className="settings-preview-btn">
+                          Preview
                         </button>
                         <button onClick={() => { setShowSettings(false); onLogout(); }} className="settings-logout-btn">
                           Logout
@@ -1935,6 +1983,30 @@ function Main({ onLogout, identityKeys }) {
         </>
       )}
 
+      {/* Profile modal (popover from user list click) */}
+      <ProfileModal
+        isOpen={!!profileModalUser}
+        user={profileModalUser}
+        position={profileModalPosition}
+        onClose={() => { setProfileModalUser(null); setProfileModalPosition(null); }}
+      />
+
+      {/* Profile preview (centered, from settings) */}
+      <ProfileModal
+        isOpen={showProfilePreview}
+        user={{
+          id: localStorage.getItem('userId'),
+          displayName: settingsForm.displayName || userDisplayName,
+          username,
+          nameColor: settingsForm.nameColor || userNameColor,
+          profilePicture: settingsForm.profilePicture !== undefined ? settingsForm.profilePicture : profilePicture,
+          status: 'online',
+          bio: settingsForm.bio,
+        }}
+        position={null}
+        onClose={() => setShowProfilePreview(false)}
+      />
+
       {/* ── Content Area ──────────────────────────────────────────── */}
       {connectedServer ? (
         <>
@@ -1973,7 +2045,11 @@ function Main({ onLogout, identityKeys }) {
                   onRemoveReaction={handleRemoveReaction}
                   accountKey={accountKey}
                   socket={socket}
-                  typingUsers={typingUsers[selectedChannel.id] || {}}
+                  typingUsers={Object.fromEntries(
+                    Object.entries(typingUsers).filter(
+                      ([, v]) => v.channelId === selectedChannel.id && v.userId !== localStorage.getItem('userId')
+                    )
+                  )}
                   users={users}
                 />
               </>
@@ -1984,7 +2060,11 @@ function Main({ onLogout, identityKeys }) {
             )}
           </main>
 
-          <UserList users={users} />
+          <UserList users={users} onUserClick={(user, e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            setProfileModalUser(user);
+            setProfileModalPosition({ x: rect.left, y: rect.top });
+          }} />
         </>
       ) : (
         /* ── Empty State (no server connected) ──────────────────── */

@@ -57,6 +57,8 @@ export const userAPI = {
     api.put('/users/profilePicture', { profilePicture }),
   updateNameColor: (nameColor) =>
     api.put('/users/nameColor', { nameColor }),
+  updateBio: (bio) =>
+    api.put('/users/bio', { bio }),
   getAllUsers: () => api.get('/users/all'),
   leaveServer: () => api.delete('/users/leave')
 };

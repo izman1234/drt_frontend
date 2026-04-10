@@ -1,0 +1,217 @@
+/* ── Profile Modal ──────────────────────────────────────────────────── */
+
+.profile-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 6, 18, 0.72);
+  backdrop-filter: blur(4px);
+  animation: profileModalFadeIn 0.15s ease-out;
+}
+
+@keyframes profileModalFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.profile-modal {
+  background: #1e1730;
+  border: 1px solid #2a1f42;
+  border-radius: 12px;
+  width: 340px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55);
+  animation: profileModalSlideIn 0.18s ease-out;
+  overflow: hidden;
+  z-index: 10000;
+}
+
+@keyframes profileModalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ── Banner ─────────────────────────────────────────────────────────── */
+
+.profile-modal-banner {
+  height: 60px;
+  background: linear-gradient(135deg, #3a2554 0%, #1e1730 100%);
+  position: relative;
+}
+
+.profile-modal-dots-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(30, 23, 48, 0.6);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #a78bba;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.profile-modal-dots-btn:hover {
+  background: rgba(42, 31, 66, 0.9);
+  color: #e9d5ff;
+}
+
+/* ── Avatar (overlaps banner) ───────────────────────────────────────── */
+
+.profile-modal-avatar-wrapper {
+  display: flex;
+  padding: 0 16px;
+  margin-top: -40px;
+  position: relative;
+  z-index: 1;
+}
+
+.profile-modal-avatar {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: #3a2554;
+  border: 5px solid #1e1730;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.profile-modal-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.profile-modal-avatar-initial {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  font-size: 28px;
+  color: #e9d5ff;
+  background: #3a2554;
+  border-radius: 50%;
+}
+
+.profile-modal-status-dot {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  border: 3px solid #1e1730;
+  border-radius: 50%;
+  z-index: 2;
+}
+
+.profile-modal-status-dot.online {
+  background: #43b581;
+}
+
+.profile-modal-status-dot.away {
+  background: #ffa500;
+}
+
+.profile-modal-status-dot.offline {
+  background: #72767d;
+}
+
+/* ── Info card ──────────────────────────────────────────────────────── */
+
+.profile-modal-info {
+  padding: 12px 16px 16px;
+}
+
+.profile-modal-display-name {
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+  margin-bottom: 2px;
+}
+
+.profile-modal-username-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #a78bba;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.profile-modal-username {
+  color: #8b75a1;
+}
+
+.profile-modal-separator {
+  color: #5a4770;
+  font-size: 10px;
+}
+
+.profile-modal-id {
+  color: #6b5b7b;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 1px 6px;
+  border-radius: 4px;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-modal-id:hover {
+  background: #2a1f42;
+  color: #e9d5ff;
+}
+
+.profile-modal-id.copied {
+  background: #166534;
+  color: #4ade80;
+}
+
+/* ── Divider & Bio ─────────────────────────────────────────────────── */
+
+.profile-modal-divider {
+  height: 1px;
+  background: #2a1f42;
+  margin: 12px 0;
+}
+
+.profile-modal-section-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #e9d5ff;
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.profile-modal-bio {
+  font-size: 13px;
+  color: #a78bba;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -1,7 +1,7 @@
 import React from 'react';
 import './UserList.css';
 
-function UserList({ users }) {
+function UserList({ users, onUserClick }) {
   const normalizeNameColor = (color) => {
     // Convert old grey default to new purple
     if (color === '#b9bbbe' || color === '#b5bac1') {
@@ -57,7 +57,7 @@ function UserList({ users }) {
         <div className="user-group">
           <h4>Online ({onlineUsers.length})</h4>
           {onlineUsers.map(user => (
-            <div key={user.id} className="user-item online">
+            <div key={user.id} className="user-item online" onClick={(e) => onUserClick && onUserClick(user, e)} style={{ cursor: onUserClick ? 'pointer' : undefined }}>
               <UserAvatar user={user} />
               <span className="user-name" style={{ color: normalizeNameColor(user.nameColor) }}>{user.displayName || user.username}</span>
             </div>
@@ -69,7 +69,7 @@ function UserList({ users }) {
         <div className="user-group">
           <h4>Offline ({offlineUsers.length})</h4>
           {offlineUsers.map(user => (
-            <div key={user.id} className="user-item offline">
+            <div key={user.id} className="user-item offline" onClick={(e) => onUserClick && onUserClick(user, e)} style={{ cursor: onUserClick ? 'pointer' : undefined }}>
               <UserAvatar user={user} />
               <span className="user-name" style={{ color: normalizeNameColor(user.nameColor) }}>{user.displayName || user.username}</span>
               

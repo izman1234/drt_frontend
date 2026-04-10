@@ -1011,7 +1011,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                         {message.repliedToImage && Array.isArray(message.repliedToImage) && message.repliedToImage.length > 0 && (
                           <img src={message.repliedToImage[0]} alt="quoted message" className="quoted-message-image" />
                         )}
-                        <span className="quoted-message-text">{message.repliedToContent && (message.repliedToContent.length > 80 ? message.repliedToContent.substring(0, 80) + '...' : message.repliedToContent)}</span>
+                        <span className="quoted-message-text">{message.repliedToContent && parseMessageContent(message.repliedToContent.length > 80 ? message.repliedToContent.substring(0, 80) + '...' : message.repliedToContent)}</span>
                       </div>
                     </div>
                   )}
@@ -1345,7 +1345,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
             </div>
             <div className="reply-content">
               {replyingTo.image && Array.isArray(replyingTo.image) && replyingTo.image.length > 0 && <img src={replyingTo.image[0]} alt="replied message content" className="reply-image-preview" />}
-              <span className="reply-text">{replyingTo.text.length > 100 ? replyingTo.text.substring(0, 100) + '...' : replyingTo.text}</span>
+              <span className="reply-text">{parseMessageContent(replyingTo.text.length > 100 ? replyingTo.text.substring(0, 100) + '...' : replyingTo.text)}</span>
             </div>
           </div>
         )}
