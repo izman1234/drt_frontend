@@ -74,7 +74,7 @@ const VoiceMemberComponent = memo(({ member, isSelected, onSelect, isSpeaking, n
 
 VoiceMemberComponent.displayName = 'VoiceMember';
 
-function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersByChannel = {}, activeVoiceChannel = null, onChannelsChanged, speakingUsers = {}, selectedUserForControl, onSelectUserForControl, userVolumes, userMutes, onVolumeChange, onToggleMute, currentUserId, unreadChannels = new Set() }) {
+function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersByChannel = {}, activeVoiceChannel = null, onChannelsChanged, speakingUsers = {}, selectedUserForControl, onSelectUserForControl, userVolumes, userMutes, onVolumeChange, onToggleMute, currentUserId, unreadChannels = new Set(), mentionCounts = {} }) {
   const textChannels = channels.filter(c => c.type === 'text');
   const voiceChannels = channels.filter(c => c.type === 'voice');
   
@@ -235,6 +235,8 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
       );
     }
 
+    const mentions = mentionCounts[channel.id] || 0;
+
     return (
       <div
         className={`channel-item ${isActive ? 'active' : ''} ${isDragging ? 'dragging' : ''} ${isDragOver ? 'drag-over' : ''} ${isUnread && !isActive ? 'unread' : ''}`}
@@ -249,6 +251,9 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
       >
         <span className="channel-icon">{channel.type === 'text' ? '#' : <Twemoji emoji="🔊" size={14} />}</span>
         <span className="channel-name">{channel.name}</span>
+        {mentions > 0 && !isActive && (
+          <span className="mention-badge">{mentions}</span>
+        )}
         {hoveredChannel === channel.id && (
           <button
             className="channel-settings-icon"

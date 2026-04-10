@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { channelAPI, messageAPI, userAPI, reactionAPI, identityAPI, setServerUrl, fetchServerInfo, resolveServerUrl } from '../api';
 import { signData, createMessageSigningPayload, createBackupBlob, signChallenge, toBase64 } from '../crypto';
 import io from 'socket.io-client';
@@ -45,6 +45,7 @@ function Main({ onLogout, identityKeys }) {
   const [profilePicture, setProfilePicture] = useState(localStorage.getItem(`drt_profilePicture_${accountKey}`) || null);
   const [showImageCropper, setShowImageCropper] = useState(false);
   const [imageDataToEdit, setImageDataToEdit] = useState(null);
+  const [pendingProfilePicture, setPendingProfilePicture] = useState(null);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
@@ -53,6 +54,9 @@ function Main({ onLogout, identityKeys }) {
   const [userVolumes, setUserVolumes] = useState({}); // { userId: 0-2 } (slider value, squared for gain)
   const [userMutes, setUserMutes] = useState({}); // { userId: boolean }
   const [unreadChannels, setUnreadChannels] = useState(new Set()); // Set of channel IDs with unread messages
+  const [mentionCounts, setMentionCounts] = useState({}); // { channelId: number }
+  const [typingUsers, setTypingUsers] = useState({}); // { channelId: { userId: { displayName, timeout } } }
+  const typingTimeoutsRef = useRef({}); // track timeout IDs for cleanup
   const [serverBackupEnabled, setServerBackupEnabled] = useState(
     localStorage.getItem('drt_serverBackup') !== 'false'
   );
@@ -626,6 +630,14 @@ function Main({ onLogout, identityKeys }) {
       );
     });
 
+    socket.on('user:displayName-updated', ({ userId: updatedUserId, displayName }) => {
+      setMessages(prevMessages =>
+        prevMessages.map(msg =>
+          msg.userId === updatedUserId ? { ...msg, displayName } : msg
+        )
+      );
+    });
+
     socket.on('channel:created', (channel) => {
       loadChannels();
     });
@@ -769,6 +781,21 @@ function Main({ onLogout, identityKeys }) {
     // Listen for new messages and add them to the current channel
     const handleMessageCreated = ({ channelId, message }) => {
       console.log('New message received:', message);
+      // Clear typing indicator for this user when their message arrives
+      if (message.userId) {
+        const key = `${channelId}_${message.userId}`;
+        if (typingTimeoutsRef.current[key]) clearTimeout(typingTimeoutsRef.current[key]);
+        delete typingTimeoutsRef.current[key];
+        setTypingUsers(prev => {
+          const ch = { ...(prev[channelId] || {}) };
+          delete ch[message.userId];
+          if (Object.keys(ch).length === 0) {
+            const { [channelId]: _, ...rest } = prev;
+            return rest;
+          }
+          return { ...prev, [channelId]: ch };
+        });
+      }
       if (selectedChannel && selectedChannel.id === channelId) {
         setMessages(prevMessages => {
           // Check if message already exists to prevent duplicates
@@ -787,6 +814,13 @@ function Main({ onLogout, identityKeys }) {
             next.add(channelId);
             return next;
           });
+        }
+      }
+      // Track mention counts for channels we're not currently viewing
+      const myUserId = localStorage.getItem('userId');
+      if (message.userId !== myUserId && message.content && message.content.includes(`<@${myUserId}>`)) {
+        if (!selectedChannel || selectedChannel.id !== channelId) {
+          setMentionCounts(prev => ({ ...prev, [channelId]: (prev[channelId] || 0) + 1 }));
         }
       }
     };
@@ -843,12 +877,38 @@ function Main({ onLogout, identityKeys }) {
       );
     };
 
+    const handleTypingStart = ({ channelId, userId, displayName }) => {
+      if (!channelId || !userId) return;
+      setTypingUsers(prev => {
+        const channel = { ...(prev[channelId] || {}) };
+        // Clear any existing timeout for this user
+        const key = `${channelId}_${userId}`;
+        if (typingTimeoutsRef.current[key]) clearTimeout(typingTimeoutsRef.current[key]);
+        // Set timeout to remove after 3 seconds
+        typingTimeoutsRef.current[key] = setTimeout(() => {
+          setTypingUsers(p => {
+            const ch = { ...(p[channelId] || {}) };
+            delete ch[userId];
+            if (Object.keys(ch).length === 0) {
+              const { [channelId]: _, ...rest } = p;
+              return rest;
+            }
+            return { ...p, [channelId]: ch };
+          });
+          delete typingTimeoutsRef.current[key];
+        }, 3000);
+        channel[userId] = { displayName };
+        return { ...prev, [channelId]: channel };
+      });
+    };
+
     socket.on('message:created', handleMessageCreated);
     socket.on('message:updated', handleMessageUpdated);
     socket.on('message:deleted', handleMessageDeleted);
     socket.on('user:nameColor-updated', handleUserNameColorUpdated);
     socket.on('reaction:added', handleReactionAdded);
     socket.on('reaction:removed', handleReactionRemoved);
+    socket.on('typing:start', handleTypingStart);
 
     return () => {
       socket.off('message:created', handleMessageCreated);
@@ -857,6 +917,7 @@ function Main({ onLogout, identityKeys }) {
       socket.off('user:nameColor-updated', handleUserNameColorUpdated);
       socket.off('reaction:added', handleReactionAdded);
       socket.off('reaction:removed', handleReactionRemoved);
+      socket.off('typing:start', handleTypingStart);
     };
   }, [socket, selectedChannel]);
 
@@ -942,6 +1003,10 @@ function Main({ onLogout, identityKeys }) {
       const next = new Set(prev);
       next.delete(channelId);
       return next;
+    });
+    setMentionCounts(prev => {
+      const { [channelId]: _, ...rest } = prev;
+      return rest;
     });
     try {
       await channelAPI.markChannelRead(channelId);
@@ -1036,11 +1101,11 @@ function Main({ onLogout, identityKeys }) {
     if (!selectedChannel) return;
     try {
       const content = (messageData.text || '').trim() ? messageData.text : '';
-      const image = messageData.image || null;
+      const images = messageData.images && messageData.images.length > 0 ? messageData.images : null;
       const replyTo = messageData.replyTo || null;
       
-      // Ensure we have either content or image
-      if (!content && !image) {
+      // Ensure we have either content or images
+      if (!content && !images) {
         console.warn('No content or image to send');
         return;
       }
@@ -1054,7 +1119,7 @@ function Main({ onLogout, identityKeys }) {
         signature = await signData(signingPayload, identityKeys.privateKey);
       }
       
-      await messageAPI.sendMessage(selectedChannel.id, content, image, replyTo, signature, signingPayload);
+      await messageAPI.sendMessage(selectedChannel.id, content, images, replyTo, signature, signingPayload);
     } catch (error) {
       console.error('Error sending message:', error);
     }
@@ -1205,18 +1270,7 @@ function Main({ onLogout, identityKeys }) {
   };
 
   const handleImageCropComplete = (croppedImage) => {
-    setProfilePicture(croppedImage);
-    localStorage.setItem(`drt_profilePicture_${accountKey}`, croppedImage);
-    
-    // Also save to backend so other users can see it
-    userAPI.updateProfilePicture(croppedImage)
-      .then(() => {
-        console.log('Profile picture saved to backend');
-      })
-      .catch((error) => {
-        console.error('Failed to save profile picture to backend:', error);
-      });
-    
+    setPendingProfilePicture(croppedImage);
     setShowImageCropper(false);
     setImageDataToEdit(null);
   };
@@ -1228,41 +1282,68 @@ function Main({ onLogout, identityKeys }) {
   // Pause GIFs when application loses focus
   useEffect(() => {
     const pausedCanvases = new Map(); // Track which images have paused canvases
+    let windowFocused = document.hasFocus(); // Track current focus state
+    let observer = null; // MutationObserver for new GIFs added while unfocused
+
+    const isGifSrc = (src) => src && (src.includes('.gif') || src.includes('data:image/gif'));
+
+    const pauseGifImg = (img) => {
+      if (!isGifSrc(img.src)) return;
+      try {
+        if (img.complete) {
+          captureAndPauseGif(img);
+        } else {
+          img.onload = () => captureAndPauseGif(img);
+        }
+      } catch (e) {
+        console.log('Could not pause GIF:', e);
+      }
+    };
+
+    const startObserver = () => {
+      if (observer) return;
+      observer = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType !== Node.ELEMENT_NODE) continue;
+            // Check if the added node itself is a GIF image
+            if (node.tagName === 'IMG') {
+              pauseGifImg(node);
+            }
+            // Check children of the added node for GIF images
+            const imgs = node.querySelectorAll ? node.querySelectorAll('img') : [];
+            imgs.forEach(pauseGifImg);
+          }
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    };
+
+    const stopObserver = () => {
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+    };
 
     const handleFocusChange = (isVisible) => {
+      windowFocused = isVisible;
       if (!isVisible) {
         // Window lost focus or tab was switched - pause all GIFs
         const imageElements = document.querySelectorAll('img');
-        
-        imageElements.forEach(img => {
-          // Check if it's a GIF
-          if (img.src && (img.src.includes('.gif') || img.src.includes('data:image/gif'))) {
-            try {
-              // Wait for image to be loaded before capturing
-              if (img.complete) {
-                captureAndPauseGif(img);
-              } else {
-                // Wait for image to load
-                img.onload = () => {
-                  captureAndPauseGif(img);
-                };
-              }
-            } catch (e) {
-              console.log('Could not pause GIF:', e);
-            }
-          }
-        });
+        imageElements.forEach(pauseGifImg);
+        // Start watching for new GIF images added while unfocused
+        startObserver();
       } else {
+        // Stop watching for new images
+        stopObserver();
         // Window gained focus - resume all GIFs
         pausedCanvases.forEach((canvas, img) => {
           if (canvas && canvas.parentNode) {
-            // Remove the canvas from DOM
             canvas.parentNode.removeChild(canvas);
-            // Show the image again
             img.style.display = '';
           }
         });
-        // Clear the map so images can be paused again next time
         pausedCanvases.clear();
       }
     };
@@ -1326,16 +1407,26 @@ function Main({ onLogout, identityKeys }) {
         console.log('Error creating pause canvas:', e);
       }
     };
+
+    const onBlur = () => handleFocusChange(false);
+    const onFocus = () => handleFocusChange(true);
+    const onVisibilityChange = () => handleFocusChange(!document.hidden);
     
     // Listen for both window blur/focus (clicking away) and visibility change (tab switching)
-    window.addEventListener('blur', () => handleFocusChange(false));
-    window.addEventListener('focus', () => handleFocusChange(true));
-    document.addEventListener('visibilitychange', () => handleFocusChange(!document.hidden));
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('focus', onFocus);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // If app starts unfocused, begin observing immediately
+    if (!windowFocused) {
+      startObserver();
+    }
     
     return () => {
-      window.removeEventListener('blur', () => handleFocusChange(false));
-      window.removeEventListener('focus', () => handleFocusChange(true));
-      document.removeEventListener('visibilitychange', () => handleFocusChange(!document.hidden));
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('focus', onFocus);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      stopObserver();
       
       // Cleanup canvases on unmount
       pausedCanvases.forEach((canvas) => {
@@ -1453,6 +1544,7 @@ function Main({ onLogout, identityKeys }) {
                 onToggleMute={handleToggleMuteUser}
                 currentUserId={localStorage.getItem('userId')}
                 unreadChannels={unreadChannels}
+                mentionCounts={mentionCounts}
               />
             </div>
           </>
@@ -1508,10 +1600,10 @@ function Main({ onLogout, identityKeys }) {
       {/* ── Settings Modal (always accessible) ─────────────────────── */}
       {showSettings && (
         <>
-          <div className="settings-backdrop" onClick={() => setShowSettings(false)} />
+          <div className="settings-backdrop" onClick={() => { setPendingProfilePicture(null); setSettingsForm({ displayName: userDisplayName, nameColor: userNameColor }); setShowSettings(false); }} />
           <div className="settings-modal-container">
             <div className="settings-modal-content">
-              <button className="settings-modal-close" onClick={() => setShowSettings(false)}>×</button>
+              <button className="settings-modal-close" onClick={() => { setPendingProfilePicture(null); setSettingsForm({ displayName: userDisplayName, nameColor: userNameColor }); setShowSettings(false); }}>×</button>
 
               <div className="settings-modal-layout">
                 <div className="settings-tab-sidebar">
@@ -1549,8 +1641,8 @@ function Main({ onLogout, identityKeys }) {
                     <>
                       <div className="settings-profile-section">
                         <div className="settings-avatar">
-                          {profilePicture ? (
-                            <img src={profilePicture} alt="Profile" />
+                          {(pendingProfilePicture || profilePicture) ? (
+                            <img src={pendingProfilePicture || profilePicture} alt="Profile" />
                           ) : (
                             <div className="settings-avatar-placeholder">{userDisplayName.charAt(0).toUpperCase()}</div>
                           )}
@@ -1880,6 +1972,9 @@ function Main({ onLogout, identityKeys }) {
                   onAddReaction={handleAddReaction}
                   onRemoveReaction={handleRemoveReaction}
                   accountKey={accountKey}
+                  socket={socket}
+                  typingUsers={typingUsers[selectedChannel.id] || {}}
+                  users={users}
                 />
               </>
             ) : (

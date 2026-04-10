@@ -324,10 +324,11 @@ export async function applyOutputDevice(audioElement) {
 /* ────────────────────────────────────────────────────────────────────
  * applyRemoteGain — set gain on a remote peer's playback
  * ──────────────────────────────────────────────────────────────────── */
-export function applyRemoteGain(gainNode) {
+export function applyRemoteGain(makeupGain) {
   const vs = loadVoiceSettings();
-  if (gainNode) {
-    gainNode.gain.value = volumeToGain(vs.outputVolume);
+  if (makeupGain) {
+    const electronMakeup = IS_ELECTRON ? 1.2 : 1.0;
+    makeupGain.gain.value = volumeToGain(vs.outputVolume) * electronMakeup;
   }
 }
 
@@ -338,8 +339,9 @@ export function applyRemoteGain(gainNode) {
  * Chain: source → gainNode → compressor → destination
  * ──────────────────────────────────────────────────────────────────── */
 export function createRemoteAudioChain(audioContext, sourceNode, initialGain = 1) {
+  // gainNode is for per-user volume control only
   const gainNode = audioContext.createGain();
-  gainNode.gain.value = volumeToGain(initialGain);
+  gainNode.gain.value = 1;
 
   const compressor = audioContext.createDynamicsCompressor();
   compressor.threshold.value = -6;
@@ -348,8 +350,10 @@ export function createRemoteAudioChain(audioContext, sourceNode, initialGain = 1
   compressor.attack.value = 0.002;
   compressor.release.value = 0.1;
 
+  // makeupGain handles global outputVolume + Electron makeup
+  const electronMakeup = IS_ELECTRON ? 1.2 : 1.0;
   const makeupGain = audioContext.createGain();
-  makeupGain.gain.value = IS_ELECTRON ? 1.2 : 1.0;
+  makeupGain.gain.value = volumeToGain(initialGain) * electronMakeup;
 
   sourceNode.connect(gainNode);
   gainNode.connect(compressor);
@@ -365,64 +369,164 @@ export function createRemoteAudioChain(audioContext, sourceNode, initialGain = 1
  *
  * Returns an unsubscribe function.
  * ──────────────────────────────────────────────────────────────────── */
-export function subscribeToPipelineUpdates({ filtersRef, remoteGainNodesRef, localStreamRef, audioContextRef }) {
+export function subscribeToPipelineUpdates({ filtersRef, remoteGainNodesRef, localStreamRef, audioContextRef, peersRef, audioElementsRef, analyserRef, dataArrayRef, isMutedRef }) {
+  // Track previous device IDs to detect changes
+  let prevInputDeviceId  = loadVoiceSettings().inputDeviceId;
+  let prevOutputDeviceId = loadVoiceSettings().outputDeviceId;
+  let switching = false; // guard against concurrent device switches
+
   return onVoiceSettingsChange(async (vs) => {
     const baseGain = IS_ELECTRON ? 1.2 : 1;
     const userId = localStorage.getItem('userId');
     const filters = filtersRef?.current?.[userId];
 
-    // ── 1. Apply WebRTC track constraints live (EC / AGC) ────────────
-    if (localStreamRef?.current) {
-      const track = localStreamRef.current.getAudioTracks()[0];
-      if (track && track.readyState === 'live') {
-        try {
-          await track.applyConstraints({
-            echoCancellation: vs.echoCancellation,
-            noiseSuppression: true,               // Stack with RNNoise
-            autoGainControl:  vs.autoGainControl,
-          });
-          console.log('[AudioEngine] Track constraints applied live');
-        } catch (e) {
-          console.warn('[AudioEngine] applyConstraints failed:', e);
+    // ── 0. Live input-device switch ──────────────────────────────────
+    const inputDeviceChanged = vs.inputDeviceId !== prevInputDeviceId;
+    prevInputDeviceId = vs.inputDeviceId;
+
+    if (inputDeviceChanged && localStreamRef?.current && audioContextRef?.current && !switching) {
+      switching = true;
+      try {
+        const audioContext = audioContextRef.current;
+        if (audioContext.state === 'suspended') await audioContext.resume().catch(() => {});
+
+        // Get new stream from the selected device
+        const constraints = getUserMediaConstraints();
+        const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+        // Stop old raw tracks
+        localStreamRef.current.getAudioTracks().forEach(t => t.stop());
+        if (localStreamRef.current._processedStream) {
+          localStreamRef.current._processedStream.getTracks().forEach(t => t.stop());
         }
-      }
-    }
 
-    // ── 2. Patch the Web Audio filter chain in-place ─────────────────
-    if (filters) {
-      // RNNoise: toggle bypass and noise gate threshold
-      if (filters.rnnoiseNode) {
-        if (filters.rnnoiseNode._setBypass) {
-          filters.rnnoiseNode._setBypass(!vs.noiseSuppression);
+        // Tear down old filters
+        if (filters) {
+          try { if (filters.rnnoiseNode && filters.rnnoiseNode._destroy) filters.rnnoiseNode._destroy(); } catch {}
         }
-        if (filters.rnnoiseNode._setGateThreshold) {
-          filters.rnnoiseNode._setGateThreshold(vs.noiseGateThreshold ?? -50);
+
+        // Build new filter chain
+        const source = audioContext.createMediaStreamSource(newStream);
+        const newFilters = await createAudioFilters(audioContext, source);
+        const destination = audioContext.createMediaStreamDestination();
+        newFilters.gainNode.connect(destination);
+
+        // Analyser for speaking detection
+        if (analyserRef?.current) {
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 256;
+          newFilters.gainNode.connect(analyser);
+          analyserRef.current[userId] = analyser;
+          if (dataArrayRef?.current) {
+            dataArrayRef.current[userId] = new Uint8Array(analyser.frequencyBinCount);
+          }
         }
-      }
 
-      // Compressor: adapt to AGC mode
-      if (filters.compressor && filters.compressor._applyAGCMode) {
-        filters.compressor._applyAGCMode(vs.autoGainControl);
-      }
+        // Initialize mute gain
+        if (newFilters.muteGain && isMutedRef) {
+          newFilters.muteGain.gain.setValueAtTime(
+            isMutedRef.current ? 0 : 1,
+            audioContext.currentTime
+          );
+        }
 
-      // Final gain (reduced when AGC is on)
-      if (filters.gainNode) {
-        try {
-          const agcFactor = vs.autoGainControl ? 0.5 : 1.0;
-          filters.gainNode.gain.value = baseGain * vs.inputVolume * (vs.inputGain / 1.5) * agcFactor;
-        } catch {}
-      }
-    }
+        // Update refs
+        localStreamRef.current = newStream;
+        localStreamRef.current._processedStream = destination.stream;
+        filtersRef.current[userId] = newFilters;
 
-    // ── 3. Update remote playback gain (outputVolume) ────────────────
-    if (remoteGainNodesRef?.current) {
-      Object.values(remoteGainNodesRef.current).forEach((rg) => {
-        if (rg && rg.gainNode) {
+        // Replace track on all peer connections
+        const newTrack = destination.stream.getAudioTracks()[0];
+        if (peersRef?.current && newTrack) {
+          for (const pc of Object.values(peersRef.current)) {
+            const sender = pc.getSenders().find(s => s.track?.kind === 'audio');
+            if (sender) {
+              await sender.replaceTrack(newTrack);
+            }
+          }
+        }
+
+        console.log('[AudioEngine] Input device switched live');
+      } catch (e) {
+        console.warn('[AudioEngine] Live input device switch failed:', e);
+      } finally {
+        switching = false;
+      }
+      // Settings (gain, noise suppression, etc.) are already baked into the
+      // new filters via createAudioFilters, so skip to step 3.
+    } else {
+      // ── 1. Apply WebRTC track constraints live (EC / AGC) ──────────
+      if (localStreamRef?.current) {
+        const track = localStreamRef.current.getAudioTracks()[0];
+        if (track && track.readyState === 'live') {
           try {
-            rg.gainNode.gain.value = volumeToGain(vs.outputVolume);
+            await track.applyConstraints({
+              echoCancellation: vs.echoCancellation,
+              noiseSuppression: true,               // Stack with RNNoise
+              autoGainControl:  vs.autoGainControl,
+            });
+            console.log('[AudioEngine] Track constraints applied live');
+          } catch (e) {
+            console.warn('[AudioEngine] applyConstraints failed:', e);
+          }
+        }
+      }
+
+      // ── 2. Patch the Web Audio filter chain in-place ───────────────
+      const currentFilters = filtersRef?.current?.[userId];
+      if (currentFilters) {
+        // RNNoise: toggle bypass and noise gate threshold
+        if (currentFilters.rnnoiseNode) {
+          if (currentFilters.rnnoiseNode._setBypass) {
+            currentFilters.rnnoiseNode._setBypass(!vs.noiseSuppression);
+          }
+          if (currentFilters.rnnoiseNode._setGateThreshold) {
+            currentFilters.rnnoiseNode._setGateThreshold(vs.noiseGateThreshold ?? -50);
+          }
+        }
+
+        // Compressor: adapt to AGC mode
+        if (currentFilters.compressor && currentFilters.compressor._applyAGCMode) {
+          currentFilters.compressor._applyAGCMode(vs.autoGainControl);
+        }
+
+        // Final gain (reduced when AGC is on)
+        if (currentFilters.gainNode) {
+          try {
+            const agcFactor = vs.autoGainControl ? 0.5 : 1.0;
+            currentFilters.gainNode.gain.value = baseGain * vs.inputVolume * (vs.inputGain / 1.5) * agcFactor;
+          } catch {}
+        }
+      }
+    }
+
+    // ── 3. Update remote playback gain (outputVolume via makeupGain) ─
+    if (remoteGainNodesRef?.current) {
+      const electronMakeup = IS_ELECTRON ? 1.2 : 1.0;
+      Object.values(remoteGainNodesRef.current).forEach((rg) => {
+        if (rg && rg.makeupGain) {
+          try {
+            rg.makeupGain.gain.value = volumeToGain(vs.outputVolume) * electronMakeup;
           } catch {}
         }
       });
+    }
+
+    // ── 4. Live output-device switch ─────────────────────────────────
+    const outputDeviceChanged = vs.outputDeviceId !== prevOutputDeviceId;
+    prevOutputDeviceId = vs.outputDeviceId;
+
+    if (outputDeviceChanged && audioElementsRef?.current) {
+      for (const audioEl of Object.values(audioElementsRef.current)) {
+        if (audioEl && audioEl.setSinkId) {
+          try {
+            await audioEl.setSinkId(vs.outputDeviceId === 'default' ? '' : vs.outputDeviceId);
+          } catch (e) {
+            console.warn('[AudioEngine] setSinkId failed:', e);
+          }
+        }
+      }
+      console.log('[AudioEngine] Output device switched live');
     }
 
     console.log('[AudioEngine] Pipeline settings updated live');

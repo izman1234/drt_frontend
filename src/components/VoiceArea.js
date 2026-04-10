@@ -59,6 +59,11 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       remoteGainNodesRef,
       localStreamRef,
       audioContextRef,
+      peersRef,
+      audioElementsRef,
+      analyserRef,
+      dataArrayRef,
+      isMutedRef,
     });
     return unsub;
   }, []);

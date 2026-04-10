@@ -89,8 +89,15 @@ const EMOJI_CATEGORIES = {
   }
 };
 
-function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, currentUserId, onAddReaction, onRemoveReaction, accountKey}) {
+function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, currentUserId, onAddReaction, onRemoveReaction, accountKey, socket, typingUsers, users}) {
   const [inputValue, setInputValue] = useState('');
+  const typingThrottleRef = useRef(null);
+  const [imagePreviews, setImagePreviews] = useState([]);
+  const [mentionQuery, setMentionQuery] = useState(null); // null = closed, string = active query
+  const [mentionIndex, setMentionIndex] = useState(0); // selected index in dropdown
+  const mentionDropdownRef = useRef(null);
+  const mentionsRef = useRef({}); // displayName -> userId
+  const pendingCursorRef = useRef(null);
   
   const normalizeNameColor = (color) => {
     // Convert old grey defaults to new purple
@@ -99,6 +106,53 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
     }
     return color || '#a78bba';
   };
+
+  // Build a userId→user lookup map
+  const usersById = {};
+  if (users) {
+    users.forEach(u => { usersById[u.id] = u; });
+  }
+
+  // Parse message content: render both emojis and @mention pills
+  const parseMessageContent = (text) => {
+    if (!text) return text;
+    // Split on mention tokens <@userId>
+    const mentionRegex = /<@([^>]+)>/g;
+    const segments = [];
+    let lastIdx = 0;
+    let match;
+    while ((match = mentionRegex.exec(text)) !== null) {
+      if (match.index > lastIdx) {
+        // Regular text segment — parse emojis
+        segments.push(...[].concat(parseTextWithEmoji(text.slice(lastIdx, match.index), 20)));
+      }
+      const mentionedUser = usersById[match[1]];
+      const displayName = mentionedUser ? (mentionedUser.displayName || mentionedUser.username) : 'Unknown';
+      segments.push(
+        <span key={`mention-${match.index}`} className={`mention-pill${match[1] === currentUserId ? ' mention-self' : ''}`}>
+          @{displayName}
+        </span>
+      );
+      lastIdx = match.index + match[0].length;
+    }
+    if (lastIdx < text.length) {
+      segments.push(...[].concat(parseTextWithEmoji(text.slice(lastIdx), 20)));
+    }
+    return segments.length > 0 ? segments : parseTextWithEmoji(text, 20);
+  };
+
+  // Get filtered users for mention autocomplete
+  const getMentionSuggestions = () => {
+    if (mentionQuery === null || !users) return [];
+    const q = mentionQuery.toLowerCase();
+    return users.filter(u =>
+      (u.displayName && u.displayName.toLowerCase().includes(q)) ||
+      (u.username && u.username.toLowerCase().includes(q))
+    ).slice(0, 8);
+  };
+
+  const mentionSuggestions = getMentionSuggestions();
+
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [emojiPickerFor, setEmojiPickerFor] = useState('compose'); // 'compose', 'edit', or 'reaction'
   const [emojiPickerPosition, setEmojiPickerPosition] = useState('below'); // 'above' or 'below' for edit picker
@@ -107,7 +161,6 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
   const [recentlyUsedEmojis, setRecentlyUsedEmojis] = useState([]);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showImagePicker, setShowImagePicker] = useState(false);
-  const [imagePreview, setImagePreview] = useState(null);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [contextMenu, setContextMenu] = useState(null);
   const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0, direction: 'down' }); // 'down' or 'up'
@@ -168,22 +221,91 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
     return () => clearTimeout(timerRef.current);
   }, []);
 
+  // Convert @DisplayName back to <@userId> tokens for sending
+  const processMentions = (text) => {
+    let processed = text;
+    // Sort by displayName length descending to avoid partial replacements
+    const entries = Object.entries(mentionsRef.current).sort((a, b) => b[0].length - a[0].length);
+    for (const [displayName, userId] of entries) {
+      const escaped = displayName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      processed = processed.replace(new RegExp(`@${escaped}(?=\\s|$)`, 'g'), `<@${userId}>`);
+    }
+    return processed;
+  };
+
   const handleSend = () => {
-    if (inputValue.trim() || imagePreview) {
+    if (inputValue.trim() || imagePreviews.length > 0) {
       const messageData = {
-        text: inputValue,
-        image: imagePreview,
+        text: processMentions(inputValue),
+        images: imagePreviews.length > 0 ? imagePreviews : null,
         replyTo: replyingTo?.id || null
       };
       onSendMessage(messageData);
       setInputValue('');
-      setImagePreview(null);
+      setImagePreviews([]);
       setShowEmojiPicker(false);
       setReplyingTo(null);
+      mentionsRef.current = {};
     }
   };
 
+  const insertMention = (user) => {
+    const textarea = messageInputRef.current;
+    if (!textarea) return;
+    const cursorPos = textarea.selectionStart;
+    const textBefore = inputValue.slice(0, cursorPos);
+    // Find the @ that triggered this mention
+    const atIdx = textBefore.lastIndexOf('@');
+    if (atIdx === -1) return;
+    const before = inputValue.slice(0, atIdx);
+    const after = inputValue.slice(cursorPos);
+    const displayName = user.displayName || user.username;
+    const mentionText = `@${displayName} `;
+    const newValue = before + mentionText + after;
+    // Track this mention for conversion on send
+    mentionsRef.current[displayName] = user.id;
+    setInputValue(newValue);
+    setMentionQuery(null);
+    setMentionIndex(0);
+    // Schedule cursor placement after React re-renders with the new value
+    pendingCursorRef.current = before.length + mentionText.length;
+  };
+
   const handleKeyDown = (e) => {
+    // Mention dropdown navigation
+    if (mentionQuery !== null && mentionSuggestions.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev + 1) % mentionSuggestions.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+        return;
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        insertMention(mentionSuggestions[mentionIndex]);
+        return;
+      }
+      if (e.key === ' ') {
+        // Space auto-completes the mention
+        e.preventDefault();
+        insertMention(mentionSuggestions[mentionIndex]);
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        insertMention(mentionSuggestions[mentionIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setMentionQuery(null);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -232,13 +354,20 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
     }
   }, [showEmojiPicker, recentlyUsedEmojis.length]);
 
-  // Auto-resize textarea based on content
+  // Auto-resize textarea and apply pending cursor position
   useEffect(() => {
     const textarea = messageInputRef.current;
     if (textarea) {
       textarea.style.height = '24px';
       const scrollHeight = textarea.scrollHeight;
       textarea.style.height = Math.max(scrollHeight, 24) + 'px';
+      // Apply pending cursor from mention insertion
+      if (pendingCursorRef.current !== null) {
+        textarea.selectionStart = pendingCursorRef.current;
+        textarea.selectionEnd = pendingCursorRef.current;
+        textarea.focus();
+        pendingCursorRef.current = null;
+      }
     }
   }, [inputValue]);
 
@@ -393,15 +522,30 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
   };
 
   const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file && file.type.startsWith('image/')) {
+    const files = Array.from(e.target.files);
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      showModal('Please select image files', { title: 'Invalid File' });
+      return;
+    }
+    const remaining = 10 - imagePreviews.length;
+    if (remaining <= 0) {
+      showModal('Maximum of 10 images per message', { title: 'Limit Reached' });
+      return;
+    }
+    const toProcess = imageFiles.slice(0, remaining);
+    toProcess.forEach(file => {
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImagePreview(reader.result);
+        setImagePreviews(prev => {
+          if (prev.length >= 10) return prev;
+          return [...prev, reader.result];
+        });
       };
       reader.readAsDataURL(file);
-    } else {
-      showModal('Please select an image file', { title: 'Invalid File' });
+    });
+    if (imageFiles.length > remaining) {
+      showModal(`Only ${remaining} more image(s) can be added (max 10)`, { title: 'Limit Reached' });
     }
   };
 
@@ -430,13 +574,19 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
 
   const handleGifSelect = (gifUrl) => {
     // Add GIF as image to the message
-    setImagePreview(gifUrl);
+    setImagePreviews(prev => {
+      if (prev.length >= 10) return prev;
+      return [...prev, gifUrl];
+    });
     setShowGifPicker(false);
   };
 
   const handleImageSelect = (imageData) => {
     // Add selected image to the message
-    setImagePreview(imageData);
+    setImagePreviews(prev => {
+      if (prev.length >= 10) return prev;
+      return [...prev, imageData];
+    });
     setShowImagePicker(false);
   };
 
@@ -542,8 +692,8 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
     return filtered;
   };
 
-  const removeImage = () => {
-    setImagePreview(null);
+  const removeImage = (index) => {
+    setImagePreviews(prev => prev.filter((_, i) => i !== index));
     fileInputRef.current.value = '';
   };
 
@@ -616,6 +766,8 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
       y: positionData.adjustedY,
       direction: positionData.direction
     });
+    // Detect if the right-click target was an image
+    const clickedImg = e.target.closest('img.message-image');
     setContextMenu({
       messageId: message.id,
       messageText: message.content,
@@ -623,7 +775,8 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
       messageAuthor: message.displayName || message.username,
       messageNameColor: message.nameColor,
       messageProfilePicture: message.profilePicture,
-      isOwnMessage: message.userId === currentUserId
+      isOwnMessage: message.userId === currentUserId,
+      clickedImageSrc: clickedImg ? clickedImg.src : null
     });
   };
 
@@ -683,6 +836,26 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
     setRemoveEditImage(false);
     setShowEmojiPicker(false);
     setEmojiPickerFor('compose');
+  };
+
+  const handleDownloadImage = (imageSrc) => {
+    if (!imageSrc) return;
+    // Determine file extension from data URL mime type or URL path
+    let ext = 'png';
+    if (imageSrc.startsWith('data:')) {
+      const mime = imageSrc.match(/^data:image\/(\w+)/);
+      if (mime) ext = mime[1] === 'jpeg' ? 'jpg' : mime[1];
+    } else {
+      const urlExt = imageSrc.split('?')[0].match(/\.(\w+)$/);
+      if (urlExt) ext = urlExt[1];
+    }
+    const link = document.createElement('a');
+    link.href = imageSrc;
+    link.download = `image_${Date.now()}.${ext}`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setContextMenu(null);
   };
 
   const handleDeleteMessage = (messageId) => {
@@ -810,7 +983,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                 )}
               <div
                 data-message-id={message.id}
-                className={`message ${message.userId === currentUserId ? 'own-message' : ''}`}
+                className={`message ${message.userId === currentUserId ? 'own-message' : ''}${message.content && message.content.includes(`<@${currentUserId}>`) ? ' mentioned' : ''}`}
                 onContextMenu={(e) => handleMessageRightClick(e, message)}
               >
                 <div className="message-avatar">
@@ -835,26 +1008,32 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                           <img src={message.repliedToProfilePicture} alt={message.repliedToDisplay || message.repliedToUser} className="quoted-avatar" />
                         )}
                         <span>{message.repliedToDisplay || message.repliedToUser}</span>
-                        {message.repliedToImage && (
-                          <img src={message.repliedToImage} alt="quoted message" className="quoted-message-image" />
+                        {message.repliedToImage && Array.isArray(message.repliedToImage) && message.repliedToImage.length > 0 && (
+                          <img src={message.repliedToImage[0]} alt="quoted message" className="quoted-message-image" />
                         )}
                         <span className="quoted-message-text">{message.repliedToContent && (message.repliedToContent.length > 80 ? message.repliedToContent.substring(0, 80) + '...' : message.repliedToContent)}</span>
                       </div>
                     </div>
                   )}
-                  {message.image && (
-                    <img src={message.image} alt="Message attachment" className="message-image" />
+                  {message.image && Array.isArray(message.image) && message.image.length > 0 && (
+                    <div className={`message-images message-images-${Math.min(message.image.length, 4)}`}>
+                      {message.image.map((img, imgIdx) => (
+                        <img key={imgIdx} src={img} alt={`Attachment ${imgIdx + 1}`} className="message-image" />
+                      ))}
+                    </div>
                   )}
                   {isEditing ? (
                     <div className="message-edit-form">
-                      {editingMessageImage && !removeEditImage && (
+                      {editingMessageImage && !removeEditImage && Array.isArray(editingMessageImage) && editingMessageImage.length > 0 && (
                         <div className="message-edit-image-preview">
-                          <img src={editingMessageImage} alt="Message attachment" />
+                          {editingMessageImage.map((img, imgIdx) => (
+                            <img key={imgIdx} src={img} alt={`Attachment ${imgIdx + 1}`} />
+                          ))}
                           <button
                             type="button"
                             className="remove-edit-image-btn"
                             onClick={() => setRemoveEditImage(true)}
-                            title="Remove image"
+                            title="Remove images"
                           >
                             ✕
                           </button>
@@ -965,7 +1144,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
                       </div>
                     </div>
                   ) : (
-                    message.content && <p className="message-content">{parseTextWithEmoji(message.content, 20)}</p>
+                    message.content && <p className="message-content">{parseMessageContent(message.content)}</p>
                   )}
                   <div className="message-reactions">
                     {message.reactions && message.reactions.length > 0 && (
@@ -1108,6 +1287,11 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
           <button className="context-menu-item" onClick={handleCopyText}>
             Copy Text
           </button>
+          {contextMenu.clickedImageSrc && (
+            <button className="context-menu-item" onClick={() => handleDownloadImage(contextMenu.clickedImageSrc)}>
+              Download Image
+            </button>
+          )}
           {contextMenu.isOwnMessage && (
             <button 
               className="context-menu-item delete-item"
@@ -1118,6 +1302,32 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
           )}
         </div>
       )}
+
+      {/* Typing indicator */}
+      {(() => {
+        const typers = Object.values(typingUsers);
+        if (typers.length === 0) return null;
+        let text;
+        if (typers.length === 1) {
+          text = <><strong>{typers[0].displayName}</strong> is typing</>;
+        } else if (typers.length === 2) {
+          text = <><strong>{typers[0].displayName}</strong> and <strong>{typers[1].displayName}</strong> are typing</>;
+        } else if (typers.length === 3) {
+          text = <><strong>{typers[0].displayName}</strong>, <strong>{typers[1].displayName}</strong>, and <strong>{typers[2].displayName}</strong> are typing</>;
+        } else {
+          text = <>Several people are typing</>;
+        }
+        return (
+          <div className="typing-indicator">
+            <div className="typing-dots">
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+            </div>
+            <span className="typing-text">{text}</span>
+          </div>
+        );
+      })()}
 
       <div className="message-input-container">
         {replyingTo && (
@@ -1134,15 +1344,41 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
               </button>
             </div>
             <div className="reply-content">
-              {replyingTo.image && <img src={replyingTo.image} alt="replied message content" className="reply-image-preview" />}
+              {replyingTo.image && Array.isArray(replyingTo.image) && replyingTo.image.length > 0 && <img src={replyingTo.image[0]} alt="replied message content" className="reply-image-preview" />}
               <span className="reply-text">{replyingTo.text.length > 100 ? replyingTo.text.substring(0, 100) + '...' : replyingTo.text}</span>
             </div>
           </div>
         )}
-        {imagePreview && (
+        {imagePreviews.length > 0 && (
           <div className="image-preview-container">
-            <img src={imagePreview} alt="Preview" className="image-preview" />
-            <button type="button" onClick={removeImage} className="remove-image-btn">✕</button>
+            {imagePreviews.map((img, idx) => (
+              <div key={idx} className="image-preview-item">
+                <img src={img} alt={`Preview ${idx + 1}`} className="image-preview" />
+                <button type="button" onClick={() => removeImage(idx)} className="remove-image-btn">✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {mentionQuery !== null && mentionSuggestions.length > 0 && (
+          <div className="mention-autocomplete" ref={mentionDropdownRef}>
+            {mentionSuggestions.map((user, idx) => (
+              <div
+                key={user.id}
+                className={`mention-autocomplete-item${idx === mentionIndex ? ' active' : ''}`}
+                onMouseDown={(e) => { e.preventDefault(); insertMention(user); }}
+                onMouseEnter={() => setMentionIndex(idx)}
+              >
+                <div className="mention-autocomplete-avatar">
+                  {user.profilePicture ? (
+                    <img src={user.profilePicture} alt={user.displayName || user.username} />
+                  ) : (
+                    <div className="mention-autocomplete-initial">{(user.displayName || user.username || '?').charAt(0).toUpperCase()}</div>
+                  )}
+                </div>
+                <span className="mention-autocomplete-display" style={{ color: normalizeNameColor(user.nameColor) }}>{user.displayName || user.username}</span>
+                <span className="mention-autocomplete-username">{user.username}</span>
+              </div>
+            ))}
           </div>
         )}
         <div className="message-input-form">
@@ -1158,6 +1394,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
             ref={fileInputRef}
             type="file"
             accept="image/*"
+            multiple
             onChange={handleFileSelect}
             style={{ display: 'none' }}
           />
@@ -1166,7 +1403,31 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
             ref={messageInputRef}
             placeholder="Type a message..."
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={(e) => {
+              const val = e.target.value;
+              setInputValue(val);
+              // Detect @mention trigger
+              const cursorPos = e.target.selectionStart;
+              const textBefore = val.slice(0, cursorPos);
+              const atMatch = textBefore.match(/@(\w*)$/);
+              if (atMatch) {
+                setMentionQuery(atMatch[1]);
+                setMentionIndex(0);
+              } else {
+                setMentionQuery(null);
+              }
+              // Emit typing indicator (throttled to once per 2s)
+              if (socket && channelId && !typingThrottleRef.current) {
+                socket.emit('typing:start', {
+                  channelId,
+                  userId: currentUserId,
+                  displayName: localStorage.getItem(`drt_displayName_${accountKey}`) || 'User',
+                });
+                typingThrottleRef.current = setTimeout(() => {
+                  typingThrottleRef.current = null;
+                }, 2000);
+              }
+            }}
             onKeyDown={handleKeyDown}
             className="message-input"
             style={{ resize: 'none', overflow: 'hidden', minHeight: '24px' }}

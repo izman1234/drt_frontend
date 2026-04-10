@@ -82,8 +82,8 @@ export const channelAPI = {
 };
 
 export const messageAPI = {
-  sendMessage: (channelId, content, image = null, replyTo = null, signature = null, signingPayload = null) =>
-    api.post('/messages', { channelId, content, image, replyTo, signature, signingPayload }),
+  sendMessage: (channelId, content, images = null, replyTo = null, signature = null, signingPayload = null) =>
+    api.post('/messages', { channelId, content, images, replyTo, signature, signingPayload }),
   getMessages: (channelId, limit = 50, { beforeRowId = null } = {}) => 
     api.get(`/messages/channel/${channelId}`, { params: { limit, beforeRowId } }),
   editMessage: (messageId, content, removeImage = false) =>
