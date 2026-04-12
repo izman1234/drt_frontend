@@ -43,7 +43,7 @@ function Main({ onLogout, identityKeys }) {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState('user');
   const [copiedPubKey, setCopiedPubKey] = useState(false);
-  const [settingsForm, setSettingsForm] = useState({ displayName: localStorage.getItem(`drt_displayName_${accountKey}`) || localStorage.getItem('drt_displayName') || 'User', nameColor: localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba', bio: localStorage.getItem(`drt_bio_${accountKey}`) || '' });
+  const [settingsForm, setSettingsForm] = useState({ displayName: localStorage.getItem(`drt_displayName_${accountKey}`) || localStorage.getItem('drt_displayName') || 'User', nameColor: localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba', bio: localStorage.getItem(`drt_bio_${accountKey}`) || '', customStatus: localStorage.getItem(`drt_customStatus_${accountKey}`) || '' });
   const [profilePicture, setProfilePicture] = useState(localStorage.getItem(`drt_profilePicture_${accountKey}`) || null);
   const [showImageCropper, setShowImageCropper] = useState(false);
   const [imageDataToEdit, setImageDataToEdit] = useState(null);
@@ -64,6 +64,21 @@ function Main({ onLogout, identityKeys }) {
   const [serverBackupEnabled, setServerBackupEnabled] = useState(
     localStorage.getItem('drt_serverBackup') !== 'false'
   );
+
+  // Keep profileModalUser in sync with live user data
+  useEffect(() => {
+    if (profileModalUser && users.length > 0) {
+      const updated = users.find(u => u.id === profileModalUser.id);
+      if (updated && (updated.customStatus !== profileModalUser.customStatus ||
+          updated.bio !== profileModalUser.bio ||
+          updated.displayName !== profileModalUser.displayName ||
+          updated.nameColor !== profileModalUser.nameColor ||
+          updated.profilePicture !== profileModalUser.profilePicture ||
+          updated.status !== profileModalUser.status)) {
+        setProfileModalUser(updated);
+      }
+    }
+  }, [users, profileModalUser]);
 
   // ── Updater state ───────────────────────────────────────────────────
   const [appVersion, setAppVersion] = useState('');
@@ -351,6 +366,11 @@ function Main({ onLogout, identityKeys }) {
       const localAvatar = localStorage.getItem(`drt_profilePicture_${accountKey}`);
       if (localAvatar) {
         try { await userAPI.updateProfilePicture(localAvatar); } catch {}
+      }
+
+      const localCustomStatus = localStorage.getItem(`drt_customStatus_${accountKey}`);
+      if (localCustomStatus != null) {
+        try { await userAPI.updateCustomStatus(localCustomStatus); } catch {}
       }
 
       // 6. Optionally upload backup blob
@@ -970,6 +990,10 @@ function Main({ onLogout, identityKeys }) {
           localStorage.setItem(`drt_bio_${accountKey}`, response.data.user.bio);
           setSettingsForm(prev => ({ ...prev, bio: response.data.user.bio }));
         }
+        if (response.data.user.customStatus != null) {
+          localStorage.setItem(`drt_customStatus_${accountKey}`, response.data.user.customStatus);
+          setSettingsForm(prev => ({ ...prev, customStatus: response.data.user.customStatus }));
+        }
       }
     } catch (error) {
       console.error('Error loading profile:', error);
@@ -1156,6 +1180,7 @@ function Main({ onLogout, identityKeys }) {
       displayName: userDisplayName,
       nameColor: localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba',
       bio: localStorage.getItem(`drt_bio_${accountKey}`) || '',
+      customStatus: localStorage.getItem(`drt_customStatus_${accountKey}`) || '',
       profilePicture: undefined,
     });
     setShowSettings(false);
@@ -1990,6 +2015,7 @@ function Main({ onLogout, identityKeys }) {
         user={profileModalUser}
         position={profileModalPosition}
         onClose={() => { setProfileModalUser(null); setProfileModalPosition(null); }}
+        currentUserId={localStorage.getItem('userId')}
       />
 
       {/* Profile preview (centered, from settings) */}
@@ -2003,9 +2029,11 @@ function Main({ onLogout, identityKeys }) {
           profilePicture: settingsForm.profilePicture !== undefined ? settingsForm.profilePicture : profilePicture,
           status: 'online',
           bio: settingsForm.bio,
+          customStatus: (() => { const liveUser = users.find(u => u.id === localStorage.getItem('userId')); return liveUser ? liveUser.customStatus || '' : settingsForm.customStatus || ''; })(),
         }}
         position={null}
         onClose={() => setShowProfilePreview(false)}
+        currentUserId={localStorage.getItem('userId')}
       />
 
       {/* ── Content Area ──────────────────────────────────────────── */}

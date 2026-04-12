@@ -59,7 +59,12 @@ function UserList({ users, onUserClick }) {
           {onlineUsers.map(user => (
             <div key={user.id} className="user-item online" onClick={(e) => onUserClick && onUserClick(user, e)} style={{ cursor: onUserClick ? 'pointer' : undefined }}>
               <UserAvatar user={user} />
-              <span className="user-name" style={{ color: normalizeNameColor(user.nameColor) }}>{user.displayName || user.username}</span>
+              <div className="user-info">
+                <span className="user-name" style={{ color: normalizeNameColor(user.nameColor) }}>{user.displayName || user.username}</span>
+                {user.customStatus && (
+                  <span className="user-custom-status">{user.customStatus}</span>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -71,8 +76,12 @@ function UserList({ users, onUserClick }) {
           {offlineUsers.map(user => (
             <div key={user.id} className="user-item offline" onClick={(e) => onUserClick && onUserClick(user, e)} style={{ cursor: onUserClick ? 'pointer' : undefined }}>
               <UserAvatar user={user} />
-              <span className="user-name" style={{ color: normalizeNameColor(user.nameColor) }}>{user.displayName || user.username}</span>
-              
+              <div className="user-info">
+                <span className="user-name" style={{ color: normalizeNameColor(user.nameColor) }}>{user.displayName || user.username}</span>
+                {user.customStatus && (
+                  <span className="user-custom-status">{user.customStatus}</span>
+                )}
+              </div>
             </div>
           ))}
         </div>

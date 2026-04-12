@@ -73,6 +73,8 @@
 
 .profile-modal-avatar-wrapper {
   display: flex;
+  align-items: flex-end;
+  gap: 10px;
   padding: 0 16px;
   margin-top: -40px;
   position: relative;
@@ -214,4 +216,77 @@
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* ── Custom Status ─────────────────────────────────────────────────── */
+
+.profile-modal-custom-status {
+  flex: 1;
+  min-width: 0;
+  margin-top: 28px;
+}
+
+.profile-modal-status-display {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 16px;
+  font-size: 12px;
+  color: #a78bba;
+  line-height: 1.4;
+  background: #130f1c;
+}
+
+.profile-modal-status-display.clickable {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.profile-modal-status-display.clickable:hover {
+  background: #1a1427;
+}
+
+.profile-modal-status-icon {
+  font-size: 12px;
+  color: #6b5b7b;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.profile-modal-status-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+.profile-modal-status-edit {
+  display: flex;
+  align-items: center;
+}
+
+.profile-modal-status-input {
+  width: 100%;
+  background: #130f1c;
+  border: 1px solid #3a2554;
+  border-radius: 16px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: #e9d5ff;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.15s;
+  resize: none;
+  line-height: 1.4;
+}
+
+.profile-modal-status-input::placeholder {
+  color: #6b5b7b;
+}
+
+.profile-modal-status-input:focus {
+  border-color: #a78bba;
 }

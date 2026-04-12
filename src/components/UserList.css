@@ -125,3 +125,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.user-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.user-custom-status {
+  font-size: 11px;
+  color: #8b75a1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.3;
+}

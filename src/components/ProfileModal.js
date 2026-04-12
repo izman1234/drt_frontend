@@ -1,9 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { userAPI } from '../api';
 import './ProfileModal.css';
 
-function ProfileModal({ isOpen, user, position, onClose }) {
+function ProfileModal({ isOpen, user, position, onClose, currentUserId }) {
   const [copiedId, setCopiedId] = useState(false);
+  const [editingStatus, setEditingStatus] = useState(false);
+  const [statusInput, setStatusInput] = useState('');
   const modalRef = useRef(null);
+  const statusInputRef = useRef(null);
 
   // Close on click outside (only for positioned/popover mode)
   useEffect(() => {
@@ -34,8 +38,13 @@ function ProfileModal({ isOpen, user, position, onClose }) {
 
   // Reset copy state when modal opens/closes
   useEffect(() => {
-    if (!isOpen) setCopiedId(false);
-  }, [isOpen]);
+    if (!isOpen) {
+      setCopiedId(false);
+      setEditingStatus(false);
+    } else if (user) {
+      setStatusInput(user.customStatus || '');
+    }
+  }, [isOpen, user]);
 
   // Compute position style
   const getPositionStyle = useCallback(() => {
@@ -64,6 +73,31 @@ function ProfileModal({ isOpen, user, position, onClose }) {
 
   if (!isOpen || !user) return null;
 
+  const isOwnProfile = currentUserId && user.id === currentUserId;
+
+  const handleStatusSave = async () => {
+    const trimmed = statusInput.slice(0, 128);
+    // Persist locally so it syncs across servers
+    if (currentUserId) {
+      localStorage.setItem(`drt_customStatus_${currentUserId}`, trimmed);
+    }
+    try {
+      await userAPI.updateCustomStatus(trimmed);
+    } catch {}
+    setEditingStatus(false);
+  };
+
+  const handleStatusKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleStatusSave();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      setStatusInput(user.customStatus || '');
+      setEditingStatus(false);
+    }
+  };
+
   const normalizeNameColor = (color) => {
     if (color === '#b9bbbe' || color === '#b5bac1') return '#a78bba';
     return color || '#a78bba';
@@ -83,6 +117,8 @@ function ProfileModal({ isOpen, user, position, onClose }) {
   };
 
   const isPreview = !position;
+  const isEditable = isOwnProfile && !isPreview;
+  const showCustomStatus = isEditable || (user.customStatus && user.customStatus.trim());
 
   const modal = (
     <div className="profile-modal" ref={modalRef} style={getPositionStyle()}>
@@ -100,6 +136,43 @@ function ProfileModal({ isOpen, user, position, onClose }) {
           )}
           <div className={`profile-modal-status-dot ${statusClass}`} title={statusLabel}></div>
         </div>
+
+        {/* Custom Status - right of avatar */}
+        {showCustomStatus && (
+          <div className="profile-modal-custom-status">
+            {isEditable && editingStatus ? (
+              <div className="profile-modal-status-edit">
+                <textarea
+                  ref={statusInputRef}
+                  className="profile-modal-status-input"
+                  maxLength={128}
+                  placeholder="What are you up to?"
+                  value={statusInput}
+                  onChange={(e) => setStatusInput(e.target.value)}
+                  onKeyDown={handleStatusKeyDown}
+                  onBlur={handleStatusSave}
+                  rows={2}
+                  autoFocus
+                />
+              </div>
+            ) : isEditable ? (
+              <div
+                className="profile-modal-status-display clickable"
+                onClick={() => setEditingStatus(true)}
+                title="Set a custom status"
+              >
+                <span className="profile-modal-status-icon">&#9998;</span>
+                <span className="profile-modal-status-text">
+                  {statusInput || user.customStatus || 'Set a status'}
+                </span>
+              </div>
+            ) : (
+              <div className="profile-modal-status-display">
+                <span className="profile-modal-status-text">{user.customStatus}</span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* User info card */}
