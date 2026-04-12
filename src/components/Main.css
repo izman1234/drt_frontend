@@ -632,7 +632,19 @@
   padding: 10px 12px;
   word-break: break-all;
   line-height: 1.6;
-  user-select: all;
+  user-select: none;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.settings-pubkey-box:hover {
+  background: #1e1730;
+  border-color: #3d2e5c;
+}
+
+.settings-pubkey-box.copied {
+  background: #132e1a;
+  border-color: #166534;
+  color: #4ade80;
 }
 
 .settings-profile-section {

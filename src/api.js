@@ -26,15 +26,15 @@ export function getServerUrl() {
 
 // ── Identity auth API ─────────────────────────────────────────────────
 export const identityAPI = {
-  /** Check if a username exists on the server and its auth version */
-  checkUser: (username) =>
-    api.get(`/auth/identity/check/${encodeURIComponent(username)}`),
+  /** Check if a public key exists on the server and its auth version */
+  checkUser: (publicKey) =>
+    api.get(`/auth/identity/check/${encodeURIComponent(publicKey)}`),
   /** Register a new identity on the server */
   register: (username, displayName, identityPublicKey, recoveryPublicKey) =>
     api.post('/auth/identity/register', { username, displayName, identityPublicKey, recoveryPublicKey }),
   /** Request a challenge nonce for auth. type = 'identity' | 'recovery' */
-  challenge: (username, type = 'identity') =>
-    api.post('/auth/identity/challenge', { username, type }),
+  challenge: ({ identityPublicKey, username, type = 'identity' } = {}) =>
+    api.post('/auth/identity/challenge', { identityPublicKey, username, type }),
   /** Submit a signed challenge to verify identity and get JWT */
   verify: (challengeId, signature) =>
     api.post('/auth/identity/verify', { challengeId, signature }),
@@ -42,11 +42,11 @@ export const identityAPI = {
   uploadBackupBlob: (blob) =>
     api.put('/auth/identity/backup-blob', { blob }),
   /** Download backup blob using recovery-key auth */
-  downloadBackupBlob: (username, challengeId, signature) =>
-    api.post('/auth/identity/backup-blob/download', { username, challengeId, signature }),
+  downloadBackupBlob: ({ identityPublicKey, username, challengeId, signature }) =>
+    api.post('/auth/identity/backup-blob/download', { identityPublicKey, username, challengeId, signature }),
   /** Rotate identity key using recovery-key auth */
-  rotateKey: (username, newIdentityPublicKey, challengeId, signature) =>
-    api.post('/auth/identity/rotate-key', { username, newIdentityPublicKey, challengeId, signature }),
+  rotateKey: ({ identityPublicKey, username, newIdentityPublicKey, challengeId, signature }) =>
+    api.post('/auth/identity/rotate-key', { identityPublicKey, username, newIdentityPublicKey, challengeId, signature }),
 };
 
 export const userAPI = {

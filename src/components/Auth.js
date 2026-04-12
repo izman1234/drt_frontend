@@ -698,11 +698,11 @@ function RestoreFromServer({ error, setError, setIdentityData, setKeys, setStep,
       const { recoveryPrivateKey } = await deriveFromRecoveryKey(recoverySeed.trim());
 
       // Request a recovery challenge
-      const challengeRes = (await identityAPI.challenge(username, 'recovery')).data;
+      const challengeRes = (await identityAPI.challenge({ username, type: 'recovery' })).data;
       const signature = await signChallenge(challengeRes.challenge, recoveryPrivateKey);
 
       // Download backup blob
-      const blobRes = (await identityAPI.downloadBackupBlob(username, challengeRes.challengeId, signature)).data;
+      const blobRes = (await identityAPI.downloadBackupBlob({ username, challengeId: challengeRes.challengeId, signature })).data;
 
       if (!blobRes.blob) throw new Error('No backup blob found on server');
 

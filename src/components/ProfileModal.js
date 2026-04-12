@@ -88,15 +88,6 @@ function ProfileModal({ isOpen, user, position, onClose }) {
     <div className="profile-modal" ref={modalRef} style={getPositionStyle()}>
       {/* Banner area */}
       <div className="profile-modal-banner">
-        {!isPreview && (
-          <button className="profile-modal-dots-btn" title="More options">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-              <circle cx="5" cy="12" r="2" />
-              <circle cx="12" cy="12" r="2" />
-              <circle cx="19" cy="12" r="2" />
-            </svg>
-          </button>
-        )}
       </div>
 
       {/* Avatar overlapping the banner */}
@@ -118,6 +109,14 @@ function ProfileModal({ isOpen, user, position, onClose }) {
         </div>
         <div className="profile-modal-username-row">
           <span className="profile-modal-username">{user.username}</span>
+          <span className="profile-modal-separator">•</span>
+          <span
+            className={`profile-modal-id${copiedId ? ' copied' : ''}`}
+            onClick={handleCopyId}
+            title={copiedId ? 'Copied!' : 'Click to copy public key'}
+          >
+            {copiedId ? 'Copied!' : (user.id && user.id.length > 12 ? user.id.slice(0, 6) + '…' + user.id.slice(-6) : user.id)}
+          </span>
         </div>
 
         {user.bio && (

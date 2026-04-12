@@ -42,6 +42,7 @@ function Main({ onLogout, identityKeys }) {
   const [userNameColor, setUserNameColor] = useState(localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba');
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState('user');
+  const [copiedPubKey, setCopiedPubKey] = useState(false);
   const [settingsForm, setSettingsForm] = useState({ displayName: localStorage.getItem(`drt_displayName_${accountKey}`) || localStorage.getItem('drt_displayName') || 'User', nameColor: localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba', bio: localStorage.getItem(`drt_bio_${accountKey}`) || '' });
   const [profilePicture, setProfilePicture] = useState(localStorage.getItem(`drt_profilePicture_${accountKey}`) || null);
   const [showImageCropper, setShowImageCropper] = useState(false);
@@ -264,10 +265,10 @@ function Main({ onLogout, identityKeys }) {
       const publicKeyBase64 = toBase64(identityKeys.publicKey);
       const storedIdentity = JSON.parse(localStorage.getItem('drt_identity'));
 
-      // 3. Check if user exists on this server
+      // 3. Check if our public key exists on this server
       let checkResult;
       try {
-        checkResult = (await identityAPI.checkUser(username)).data;
+        checkResult = (await identityAPI.checkUser(publicKeyBase64)).data;
       } catch (netErr) {
         // The saved URL didn't work — try auto-resolving.
         // If the saved URL was a dual-protocol HTTPS port (e.g. :5001) and the
@@ -298,7 +299,7 @@ function Main({ onLogout, identityKeys }) {
             );
             saveServerList(updatedServers);
             setServers(updatedServers);
-            checkResult = (await identityAPI.checkUser(username)).data;
+            checkResult = (await identityAPI.checkUser(publicKeyBase64)).data;
           } else {
             throw netErr; // same URL, still failing
           }
@@ -313,24 +314,14 @@ function Main({ onLogout, identityKeys }) {
         try {
           await identityAPI.register(username, displayName, publicKeyBase64, recoveryPubKey);
         } catch (regErr) {
-          // 409 = username already exists (stale check, race, or rejoin).
-          // Fall through to challenge/verify which will succeed if our key
-          // matches, or fail clearly if a different user owns the name.
+          // 409 = identity already registered (stale check or race).
+          // Fall through to challenge/verify which will succeed if our key matches.
           if (!regErr.response || regErr.response.status !== 409) throw regErr;
-        }
-      } else {
-        // Existing identity — verify public key matches
-        if (checkResult.identityPublicKey && checkResult.identityPublicKey !== publicKeyBase64) {
-          throw new Error(
-            'Identity mismatch: this server has a different public key for your username. ' +
-            'If you rotated your key, use the recovery key rotation flow. ' +
-            'Otherwise, your username may be taken by someone else on this server.'
-          );
         }
       }
 
       // 4. Challenge/response authentication
-      const challengeRes = (await identityAPI.challenge(username)).data;
+      const challengeRes = (await identityAPI.challenge({ identityPublicKey: publicKeyBase64 })).data;
       const signature = await signChallenge(challengeRes.challenge, identityKeys.privateKey);
       const verifyRes = (await identityAPI.verify(challengeRes.challengeId, signature)).data;
 
@@ -510,8 +501,8 @@ function Main({ onLogout, identityKeys }) {
     try {
       setServerUrl(server.url);
       // Authenticate first if not already connected to this server
-      const username = localStorage.getItem('drt_username');
-      const challengeRes = (await identityAPI.challenge(username)).data;
+      const publicKeyBase64 = toBase64(identityKeys.publicKey);
+      const challengeRes = (await identityAPI.challenge({ identityPublicKey: publicKeyBase64 })).data;
       const signature = await signChallenge(challengeRes.challenge, identityKeys.privateKey);
       const verifyRes = (await identityAPI.verify(challengeRes.challengeId, signature)).data;
       if (verifyRes.success) {
@@ -1759,8 +1750,18 @@ function Main({ onLogout, identityKeys }) {
                     <>
                       <div className="settings-form-section">
                         <label className="settings-label">Public Key</label>
-                        <div className="settings-pubkey-box">
-                          {identityPublicKey}
+                        <div
+                          className={`settings-pubkey-box${copiedPubKey ? ' copied' : ''}`}
+                          onClick={() => {
+                            navigator.clipboard.writeText(identityPublicKey).then(() => {
+                              setCopiedPubKey(true);
+                              setTimeout(() => setCopiedPubKey(false), 2000);
+                            }).catch(() => {});
+                          }}
+                          style={{ cursor: 'pointer', overflowWrap: 'break-word', wordBreak: 'break-all', userSelect: 'none' }}
+                          title="Click to copy"
+                        >
+                          {copiedPubKey ? 'Copied to clipboard!' : identityPublicKey}
                         </div>
                       </div>
 
