@@ -88,8 +88,8 @@ export const channelAPI = {
 export const messageAPI = {
   sendMessage: (channelId, content, images = null, replyTo = null, signature = null, signingPayload = null) =>
     api.post('/messages', { channelId, content, images, replyTo, signature, signingPayload }),
-  getMessages: (channelId, limit = 50, { beforeRowId = null } = {}) => 
-    api.get(`/messages/channel/${channelId}`, { params: { limit, beforeRowId } }),
+  getMessages: (channelId, limit = 50, { beforeRowId = null, aroundMessageId = null, afterRowId = null } = {}) => 
+    api.get(`/messages/channel/${channelId}`, { params: { limit, beforeRowId, aroundMessageId, afterRowId } }),
   editMessage: (messageId, content, removeImage = false) =>
     api.put(`/messages/${messageId}`, { content, removeImage }),
   deleteMessage: (messageId) => api.delete(`/messages/${messageId}`)

@@ -12,7 +12,10 @@ import ServerList from './ServerList';
 import CustomModal from './CustomModal';
 import VoiceSettings from './VoiceSettings';
 import ProfileModal from './ProfileModal';
+import ToastContainer from './ToastNotification';
 import Twemoji from './Twemoji';
+import { loadNotificationSettings, updateNotificationSettings } from '../notificationSettings';
+import { requestNotificationPermission, sendNotification, shouldNotifyForMessage } from '../notifications';
 import './Main.css';
 
 function Main({ onLogout, identityKeys }) {
@@ -31,6 +34,8 @@ function Main({ onLogout, identityKeys }) {
   const [selectedChannel, setSelectedChannel] = useState(null);
   const [messages, setMessages] = useState([]);
   const [, setOldestMessageRowId] = useState(null);
+  const [viewingHistory, setViewingHistory] = useState(false);
+  const [scrollToBottomTrigger, setScrollToBottomTrigger] = useState(0);
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [newChannelData, setNewChannelData] = useState({ name: '', description: '', type: 'text' });
   const [users, setUsers] = useState([]);
@@ -61,6 +66,13 @@ function Main({ onLogout, identityKeys }) {
   const [profileModalPosition, setProfileModalPosition] = useState(null);
   const [showProfilePreview, setShowProfilePreview] = useState(false);
   const typingTimersRef = useRef({});
+  const windowFocusedRef = useRef(document.hasFocus());
+  const prevVoiceMembersRef = useRef({}); // { channelId: [memberIds] } for voice join/leave detection
+  const activeVoiceChannelRef = useRef(null);
+  const channelsRef = useRef([]);
+  const toastRef = useRef(null);
+  const pendingScrollMessageRef = useRef(null); // messageId to scroll to after channel switch
+  const [notifSettings, setNotifSettings] = useState(() => loadNotificationSettings(accountKey));
   const [serverBackupEnabled, setServerBackupEnabled] = useState(
     localStorage.getItem('drt_serverBackup') !== 'false'
   );
@@ -414,6 +426,54 @@ function Main({ onLogout, identityKeys }) {
         setUsers(updatedUsers);
       });
       socketInstance.on('voice:room-members-update', ({ channelId, members }) => {
+        // Detect voice join/leave for notifications (only for active voice channel)
+        const currentVoiceCh = activeVoiceChannelRef.current;
+        if (currentVoiceCh && currentVoiceCh.id === channelId) {
+          const prevIds = prevVoiceMembersRef.current[channelId] || [];
+          const newIds = members.map(m => m.id);
+          const myId = localStorage.getItem('userId');
+          const currentNotifSettings = loadNotificationSettings(accountKey);
+
+          if (currentNotifSettings.enabled && currentNotifSettings.voice && prevIds.length > 0) {
+            const joined = newIds.filter(id => !prevIds.includes(id) && id !== myId);
+
+            const voiceNotifMode = currentNotifSettings.displayMode || 'inapp';
+            const voiceShowToast = voiceNotifMode === 'inapp' || voiceNotifMode === 'both';
+            const voiceShowNative = voiceNotifMode === 'desktop' || (voiceNotifMode === 'both' && !windowFocusedRef.current);
+
+            for (const uid of joined) {
+              const member = members.find(m => m.id === uid);
+              const name = member ? (member.displayName || 'Someone') : 'Someone';
+              if (voiceShowToast && toastRef.current) {
+                toastRef.current.addToast({
+                  title: 'Voice Channel',
+                  body: `${name} joined the voice channel`,
+                  avatar: member ? member.profilePicture : null,
+                  type: 'voice',
+                });
+              }
+              if (voiceShowNative) {
+                sendNotification({ title: 'Voice Channel', body: `${name} joined the voice channel` });
+              }
+            }
+
+            const left = prevIds.filter(id => !newIds.includes(id) && id !== myId);
+            for (const uid of left) {
+              if (voiceShowToast && toastRef.current) {
+                toastRef.current.addToast({
+                  title: 'Voice Channel',
+                  body: 'Someone left the voice channel',
+                  type: 'voice',
+                });
+              }
+              if (voiceShowNative) {
+                sendNotification({ title: 'Voice Channel', body: 'Someone left the voice channel' });
+              }
+            }
+          }
+        }
+
+        prevVoiceMembersRef.current[channelId] = members.map(m => m.id);
         setVoiceMembersByChannel(prev => ({ ...prev, [channelId]: members }));
       });
 
@@ -805,10 +865,28 @@ function Main({ onLogout, identityKeys }) {
   useEffect(() => {
     if (selectedChannel) {
       setOldestMessageRowId(null);
-      loadMessages(selectedChannel.id);
+      // Skip default load if navigateToChannel is handling an "around" load
+      if (!pendingScrollMessageRef.current) {
+        loadMessages(selectedChannel.id);
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedChannel]);
+
+  // Scroll to a pending message after messages load from a channel switch
+  useEffect(() => {
+    if (pendingScrollMessageRef.current && messages.length > 0) {
+      const targetId = pendingScrollMessageRef.current;
+      // Only fire if the target message is actually in the loaded messages
+      if (messages.some(m => m.id === targetId)) {
+        // Small delay to let React commit the DOM, then scroll
+        setTimeout(() => {
+          scrollToAndHighlightMessage(targetId);
+        }, 50);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
 
   useEffect(() => {
     if (!socket || !selectedChannel) return;
@@ -855,6 +933,49 @@ function Main({ onLogout, identityKeys }) {
           }
         }
       }
+
+      // ── Desktop notification for new messages ────────────────────
+      const myId = localStorage.getItem('userId');
+      const isMention = myId && message.content && message.content.includes(`<@${myId}>`);
+      const currentNotifSettings = loadNotificationSettings(accountKey);
+      if (shouldNotifyForMessage({
+        settings: currentNotifSettings,
+        isWindowFocused: windowFocusedRef.current,
+        messageChannelId: channelId,
+        selectedChannelId: selectedChannel ? selectedChannel.id : null,
+        messageUserId: message.userId,
+        currentUserId: myId,
+        isMention,
+      })) {
+        const channel = channels.find(c => c.id === channelId);
+        const channelName = channel ? channel.name : 'Unknown';
+        const senderName = message.displayName || message.username || 'Someone';
+        const bodyText = isMention
+          ? `${senderName} mentioned you`
+          : `${senderName}: ${(message.content || '').replace(/<@[^>]+>/g, '@user').substring(0, 100)}`;
+
+        const mode = currentNotifSettings.displayMode || 'inapp';
+        const showToast = mode === 'inapp' || mode === 'both';
+        const showNative = mode === 'desktop' || (mode === 'both' && !windowFocusedRef.current);
+
+        if (showToast && toastRef.current) {
+          toastRef.current.addToast({
+            title: `#${channelName}`,
+            body: bodyText,
+            avatar: message.profilePicture || null,
+            nameColor: message.nameColor,
+            type: isMention ? 'mention' : 'message',
+            onClick: () => navigateToChannel(channelId, message.id),
+          });
+        }
+        if (showNative) {
+          sendNotification({
+            title: `#${channelName}`,
+            body: bodyText,
+            channelId,
+          });
+        }
+      }
     };
 
     // Listen for message updates
@@ -886,7 +1007,7 @@ function Main({ onLogout, identityKeys }) {
     };
 
     // Listen for reaction added
-    const handleReactionAdded = ({ messageId, reactions }) => {
+    const handleReactionAdded = ({ messageId, reactions, reactedByUserId, messageOwnerId, channelId }) => {
       console.log('Reaction added:', messageId, reactions);
       setMessages(prevMessages =>
         prevMessages.map(m =>
@@ -895,6 +1016,46 @@ function Main({ onLogout, identityKeys }) {
             : m
         )
       );
+
+      // ── Desktop notification for reactions on my messages ──────
+      const myId = localStorage.getItem('userId');
+      const currentNotifSettings = loadNotificationSettings(accountKey);
+      if (currentNotifSettings.enabled && currentNotifSettings.reactions &&
+          messageOwnerId === myId && reactedByUserId && reactedByUserId !== myId) {
+        const reactor = users.find(u => u.id === reactedByUserId);
+        const reactorName = reactor ? (reactor.displayName || reactor.username) : 'Someone';
+        const latestEmoji = reactions && reactions.length > 0
+          ? reactions.find(r => r.userIds && r.userIds.includes(reactedByUserId))
+          : null;
+        const emoji = latestEmoji ? latestEmoji.emoji : '';
+
+        const mode = currentNotifSettings.displayMode || 'inapp';
+        const showToast = mode === 'inapp' || mode === 'both';
+        const showNative = mode === 'desktop' || (mode === 'both' && !windowFocusedRef.current);
+
+        if (showToast && toastRef.current) {
+          toastRef.current.addToast({
+            title: reactorName,
+            body: `Reacted ${emoji} to your message`,
+            avatar: reactor ? reactor.profilePicture : null,
+            nameColor: reactor ? reactor.nameColor : null,
+            type: 'reaction',
+            onClick: () => {
+              if (channelId) {
+                navigateToChannel(channelId, messageId);
+              } else {
+                scrollToAndHighlightMessage(messageId);
+              }
+            },
+          });
+        }
+        if (showNative) {
+          sendNotification({
+            title: 'Reaction',
+            body: `${reactorName} reacted ${emoji} to your message`,
+          });
+        }
+      }
     };
 
     // Listen for reaction removed
@@ -1029,13 +1190,76 @@ function Main({ onLogout, identityKeys }) {
     }
   };
 
-  const loadMessages = async (channelId, loadOlder = false) => {
+  // Navigate to a channel and optionally scroll to a specific message (used by toast click handlers)
+  const navigateToChannel = async (channelId, messageId) => {
+    const channel = channelsRef.current.find(c => c.id === channelId);
+    if (channel && channel.type === 'text') {
+      if (messageId) {
+        pendingScrollMessageRef.current = messageId;
+      }
+
+      // If already on this channel, try to scroll to the message directly
+      if (selectedChannel && selectedChannel.id === channelId && messageId) {
+        const el = document.querySelector(`[data-message-id="${messageId}"]`);
+        if (el) {
+          // Message is already in the DOM
+          pendingScrollMessageRef.current = null;
+          scrollToAndHighlightMessage(messageId);
+          return;
+        }
+        // Message not loaded — fetch messages around it
+        await loadMessages(channelId, false, messageId);
+        return;
+      }
+
+      // Switching channels — load messages around target if we have one
+      if (messageId) {
+        setSelectedChannel(channel);
+        markChannelAsRead(channel.id);
+        await loadMessages(channelId, false, messageId);
+      } else {
+        setSelectedChannel(channel);
+        markChannelAsRead(channel.id);
+      }
+    }
+  };
+
+  const scrollToAndHighlightMessage = (messageId) => {
+    // Retry until the element is in the DOM and scrollable
+    let attempts = 0;
+    const tryScroll = () => {
+      const el = document.querySelector(`[data-message-id="${messageId}"]`);
+      if (el) {
+        pendingScrollMessageRef.current = null;
+        el.scrollIntoView({ behavior: 'instant', block: 'center' });
+        el.classList.add('message-highlight');
+        setTimeout(() => el.classList.remove('message-highlight'), 2000);
+      } else if (attempts < 10) {
+        attempts++;
+        setTimeout(tryScroll, 100);
+      } else {
+        // Give up after 10 attempts
+        pendingScrollMessageRef.current = null;
+      }
+    };
+    tryScroll();
+  };
+
+  const loadMessages = async (channelId, loadOlder = false, aroundMessageId = null, loadNewer = false) => {
     try {
       let options = {};
       
-      if (loadOlder && messages.length > 0) {
-        // Always calculate the actual oldest message rowid from current state
-        // This prevents using a stale cursor when pagination fires quickly
+      if (aroundMessageId) {
+        options = { aroundMessageId };
+      } else if (loadNewer && messages.length > 0) {
+        let newestMsg = messages[0];
+        for (let msg of messages) {
+          if (msg.rowid > newestMsg.rowid) {
+            newestMsg = msg;
+          }
+        }
+        options = { afterRowId: newestMsg.rowid };
+      } else if (loadOlder && messages.length > 0) {
         let oldestMsg = messages[0];
         for (let msg of messages) {
           if (msg.rowid < oldestMsg.rowid) {
@@ -1047,35 +1271,58 @@ function Main({ onLogout, identityKeys }) {
       
       const response = await messageAPI.getMessages(channelId, 20, options);
       if (response.data.success) {
-        if (!loadOlder) {
+        if (aroundMessageId) {
+          // "Around" load — replace messages, only enter history mode if not at latest
+          const atLatest = response.data.atLatest;
+          if (!atLatest) {
+            setViewingHistory(true);
+          }
           setMessages(response.data.messages);
           if (response.data.messages.length > 0) {
-            // Find the message with the minimum rowid (oldest in the batch)
             let oldestMsg = response.data.messages[0];
             for (let msg of response.data.messages) {
-              if (msg.rowid < oldestMsg.rowid) {
-                oldestMsg = msg;
-              }
+              if (msg.rowid < oldestMsg.rowid) oldestMsg = msg;
+            }
+            setOldestMessageRowId(oldestMsg.rowid);
+          }
+        } else if (loadNewer) {
+          if (response.data.messages.length === 0) {
+            // No newer messages — we've reached the latest
+            setViewingHistory(false);
+          } else {
+            setMessages(prevMessages => {
+              const existingIds = new Set(prevMessages.map(m => m.id));
+              const newMsgs = response.data.messages.filter(m => !existingIds.has(m.id));
+              return [...prevMessages, ...newMsgs];
+            });
+            // If fewer than requested, we've reached the latest
+            if (response.data.messages.length < 20) {
+              setViewingHistory(false);
+            }
+          }
+        } else if (!loadOlder) {
+          setMessages(response.data.messages);
+          setViewingHistory(false);
+          setScrollToBottomTrigger(prev => prev + 1);
+          if (response.data.messages.length > 0) {
+            let oldestMsg = response.data.messages[0];
+            for (let msg of response.data.messages) {
+              if (msg.rowid < oldestMsg.rowid) oldestMsg = msg;
             }
             setOldestMessageRowId(oldestMsg.rowid);
           }
         } else {
-          // Filter out any messages that are already in the array (to prevent duplicates from concurrent socket updates)
           setMessages(prevMessages => {
             const existingIds = new Set(prevMessages.map(m => m.id));
             const newMessagesToAdd = response.data.messages.filter(m => !existingIds.has(m.id));
             return [...newMessagesToAdd, ...prevMessages];
           });
           if (response.data.messages.length > 0) {
-            // Find the message with the minimum rowid from what we're adding  
             let oldestMsg = response.data.messages[0];
             for (let msg of response.data.messages) {
-              if (msg.rowid < oldestMsg.rowid) {
-                oldestMsg = msg;
-              }
+              if (msg.rowid < oldestMsg.rowid) oldestMsg = msg;
             }
             setOldestMessageRowId(oldestMsg.rowid);
-
           }
         }
       }
@@ -1087,6 +1334,21 @@ function Main({ onLogout, identityKeys }) {
   const handleLoadMoreMessages = () => {
     if (selectedChannel) {
       loadMessages(selectedChannel.id, true);
+    }
+  };
+
+  const handleLoadNewerMessages = () => {
+    if (selectedChannel && viewingHistory) {
+      loadMessages(selectedChannel.id, false, null, true);
+    }
+  };
+
+  const handleJumpToLatest = () => {
+    if (selectedChannel) {
+      setViewingHistory(false);
+      pendingScrollMessageRef.current = null;
+      loadMessages(selectedChannel.id);
+      setScrollToBottomTrigger(prev => prev + 1);
     }
   };
 
@@ -1322,7 +1584,13 @@ function Main({ onLogout, identityKeys }) {
 
   useEffect(() => {
     console.log('Main.js: activeVoiceChannel updated to:', activeVoiceChannel);
+    activeVoiceChannelRef.current = activeVoiceChannel;
   }, [activeVoiceChannel]);
+
+  // Keep channelsRef in sync for use in socket callbacks
+  useEffect(() => {
+    channelsRef.current = channels;
+  }, [channels]);
 
   // Pause GIFs when application loses focus
   useEffect(() => {
@@ -1373,6 +1641,7 @@ function Main({ onLogout, identityKeys }) {
 
     const handleFocusChange = (isVisible) => {
       windowFocused = isVisible;
+      windowFocusedRef.current = isVisible;
       if (!isVisible) {
         // Window lost focus or tab was switched - pause all GIFs
         const imageElements = document.querySelectorAll('img');
@@ -1483,8 +1752,14 @@ function Main({ onLogout, identityKeys }) {
     };
   }, []);
 
+  // Request notification permission on mount
+  useEffect(() => {
+    requestNotificationPermission();
+  }, []);
+
   return (
     <div className="main-container">
+      <ToastContainer ref={toastRef} />
       {showImageCropper && imageDataToEdit && (
         <ImageCropper
           imageData={imageDataToEdit}
@@ -1671,6 +1946,12 @@ function Main({ onLogout, identityKeys }) {
                     Voice
                   </button>
                   <button
+                    className={`settings-tab-btn${settingsTab === 'notifications' ? ' active' : ''}`}
+                    onClick={() => setSettingsTab('notifications')}
+                  >
+                    Notifications
+                  </button>
+                  <button
                     className={`settings-tab-btn${settingsTab === 'updates' ? ' active' : ''}`}
                     onClick={() => setSettingsTab('updates')}
                   >
@@ -1835,6 +2116,212 @@ function Main({ onLogout, identityKeys }) {
 
                   {settingsTab === 'voice' && (
                     <VoiceSettings />
+                  )}
+
+                  {settingsTab === 'notifications' && (
+                    <div className="settings-tab-content-scrollable">
+                      <div className="settings-form-section">
+                        <label className="notif-toggle-row">
+                          <input
+                            type="checkbox"
+                            checked={notifSettings.enabled}
+                            onChange={(e) => {
+                              const updated = updateNotificationSettings({ enabled: e.target.checked }, accountKey);
+                              setNotifSettings(updated);
+                            }}
+                            className="notif-toggle-input"
+                          />
+                          <span className="notif-toggle-label-text">Enable Notifications</span>
+                        </label>
+                        <p className="notif-description">Show notifications for activity in this app.</p>
+                      </div>
+
+                      <div className={`notif-sub-settings${!notifSettings.enabled ? ' disabled' : ''}`}>
+                        <div className="settings-form-section">
+                          <label className="settings-label">Display Mode</label>
+                          <p className="notif-description">Choose how notifications are shown.</p>
+                          <div className="notif-level-group">
+                            <label className={`notif-level-option${(notifSettings.displayMode || 'inapp') === 'inapp' ? ' selected' : ''}`}>
+                              <input
+                                type="radio"
+                                name="notif-display-mode"
+                                value="inapp"
+                                checked={(notifSettings.displayMode || 'inapp') === 'inapp'}
+                                onChange={() => {
+                                  const updated = updateNotificationSettings({ displayMode: 'inapp' }, accountKey);
+                                  setNotifSettings(updated);
+                                }}
+                                disabled={!notifSettings.enabled}
+                              />
+                              <div>
+                                <strong>In-App Only</strong>
+                                <span>Toast notifications inside the app</span>
+                              </div>
+                            </label>
+                            <label className={`notif-level-option${(notifSettings.displayMode || 'inapp') === 'desktop' ? ' selected' : ''}`}>
+                              <input
+                                type="radio"
+                                name="notif-display-mode"
+                                value="desktop"
+                                checked={(notifSettings.displayMode || 'inapp') === 'desktop'}
+                                onChange={() => {
+                                  const updated = updateNotificationSettings({ displayMode: 'desktop' }, accountKey);
+                                  setNotifSettings(updated);
+                                }}
+                                disabled={!notifSettings.enabled}
+                              />
+                              <div>
+                                <strong>Desktop Only</strong>
+                                <span>Native system notifications</span>
+                              </div>
+                            </label>
+                            <label className={`notif-level-option${(notifSettings.displayMode || 'inapp') === 'both' ? ' selected' : ''}`}>
+                              <input
+                                type="radio"
+                                name="notif-display-mode"
+                                value="both"
+                                checked={(notifSettings.displayMode || 'inapp') === 'both'}
+                                onChange={() => {
+                                  const updated = updateNotificationSettings({ displayMode: 'both' }, accountKey);
+                                  setNotifSettings(updated);
+                                }}
+                                disabled={!notifSettings.enabled}
+                              />
+                              <div>
+                                <strong>Both</strong>
+                                <span>In-app toasts when focused, desktop notifications when unfocused</span>
+                              </div>
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="settings-form-section">
+                          <label className="settings-label">Notification Level</label>
+                          <p className="notif-description">Controls which messages trigger notifications.</p>
+                          <div className="notif-level-group">
+                            <label className={`notif-level-option${notifSettings.level === 1 ? ' selected' : ''}`}>
+                              <input
+                                type="radio"
+                                name="notif-level"
+                                value={1}
+                                checked={notifSettings.level === 1}
+                                onChange={() => {
+                                  const updated = updateNotificationSettings({ level: 1 }, accountKey);
+                                  setNotifSettings(updated);
+                                }}
+                                disabled={!notifSettings.enabled}
+                              />
+                              <div>
+                                <strong>Level 1 — Nothing</strong>
+                                <span>No message notifications</span>
+                              </div>
+                            </label>
+                            <label className={`notif-level-option${notifSettings.level === 2 ? ' selected' : ''}`}>
+                              <input
+                                type="radio"
+                                name="notif-level"
+                                value={2}
+                                checked={notifSettings.level === 2}
+                                onChange={() => {
+                                  const updated = updateNotificationSettings({ level: 2 }, accountKey);
+                                  setNotifSettings(updated);
+                                }}
+                                disabled={!notifSettings.enabled}
+                              />
+                              <div>
+                                <strong>Level 2 — Current Channel</strong>
+                                <span>Notify for new messages in the channel you're viewing (when unfocused)</span>
+                              </div>
+                            </label>
+                            <label className={`notif-level-option${notifSettings.level === 3 ? ' selected' : ''}`}>
+                              <input
+                                type="radio"
+                                name="notif-level"
+                                value={3}
+                                checked={notifSettings.level === 3}
+                                onChange={() => {
+                                  const updated = updateNotificationSettings({ level: 3 }, accountKey);
+                                  setNotifSettings(updated);
+                                }}
+                                disabled={!notifSettings.enabled}
+                              />
+                              <div>
+                                <strong>Level 3 — Other Channels</strong>
+                                <span>Notify for messages in channels other than the one you're viewing</span>
+                              </div>
+                            </label>
+                            <label className={`notif-level-option${notifSettings.level === 4 ? ' selected' : ''}`}>
+                              <input
+                                type="radio"
+                                name="notif-level"
+                                value={4}
+                                checked={notifSettings.level === 4}
+                                onChange={() => {
+                                  const updated = updateNotificationSettings({ level: 4 }, accountKey);
+                                  setNotifSettings(updated);
+                                }}
+                                disabled={!notifSettings.enabled}
+                              />
+                              <div>
+                                <strong>Level 4 — All Messages</strong>
+                                <span>Notify for all messages in any channel</span>
+                              </div>
+                            </label>
+                          </div>
+                        </div>
+
+                        <div className="settings-form-section">
+                          <label className="notif-toggle-row">
+                            <input
+                              type="checkbox"
+                              checked={notifSettings.mentions}
+                              onChange={(e) => {
+                                const updated = updateNotificationSettings({ mentions: e.target.checked }, accountKey);
+                                setNotifSettings(updated);
+                              }}
+                              disabled={!notifSettings.enabled}
+                              className="notif-toggle-input"
+                            />
+                            <span className="notif-toggle-label-text">@ Mention Notifications</span>
+                          </label>
+                          <p className="notif-description">Notify when someone @mentions you (always, regardless of level).</p>
+                        </div>
+
+                        <div className="settings-form-section">
+                          <label className="notif-toggle-row">
+                            <input
+                              type="checkbox"
+                              checked={notifSettings.reactions}
+                              onChange={(e) => {
+                                const updated = updateNotificationSettings({ reactions: e.target.checked }, accountKey);
+                                setNotifSettings(updated);
+                              }}
+                              disabled={!notifSettings.enabled}
+                              className="notif-toggle-input"
+                            />
+                            <span className="notif-toggle-label-text">Reaction Notifications</span>
+                          </label>
+                          <p className="notif-description">Notify when someone reacts to your messages.</p>
+                        </div>
+
+                        <div className="settings-form-section">
+                          <label className="notif-toggle-row">
+                            <input
+                              type="checkbox"
+                              checked={notifSettings.voice}
+                              onChange={(e) => {
+                                const updated = updateNotificationSettings({ voice: e.target.checked }, accountKey);
+                                setNotifSettings(updated);
+                              }}
+                              disabled={!notifSettings.enabled}
+                              className="notif-toggle-input"
+                            />
+                            <span className="notif-toggle-label-text">Voice Channel Notifications</span>
+                          </label>
+                          <p className="notif-description">Notify when someone joins or leaves your active voice channel.</p>
+                        </div>
+                      </div>
+                    </div>
                   )}
 
                   {settingsTab === 'updates' && (
@@ -2068,6 +2555,10 @@ function Main({ onLogout, identityKeys }) {
                   messages={messages}
                   onSendMessage={handleSendMessage}
                   onLoadMoreMessages={handleLoadMoreMessages}
+                  onLoadNewerMessages={handleLoadNewerMessages}
+                  onJumpToLatest={handleJumpToLatest}
+                  viewingHistory={viewingHistory}
+                  scrollToBottomTrigger={scrollToBottomTrigger}
                   channelId={selectedChannel.id}
                   currentUserId={localStorage.getItem('userId')}
                   onAddReaction={handleAddReaction}

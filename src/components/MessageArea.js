@@ -89,7 +89,7 @@ const EMOJI_CATEGORIES = {
   }
 };
 
-function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, currentUserId, onAddReaction, onRemoveReaction, accountKey, socket, typingUsers, users}) {
+function MessageArea({ messages, onSendMessage, onLoadMoreMessages, onLoadNewerMessages, onJumpToLatest, viewingHistory, scrollToBottomTrigger, channelId, currentUserId, onAddReaction, onRemoveReaction, accountKey, socket, typingUsers, users}) {
   const [inputValue, setInputValue] = useState('');
   const typingThrottleRef = useRef(null);
   const [imagePreviews, setImagePreviews] = useState([]);
@@ -197,9 +197,11 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
   const editInputRef = useRef(null);
   const lastMessageCountRef = useRef(0);
   const prevChannelIdRef = useRef(null);
-  const justSwitchedChannelRef = useRef(false);
   const inputContainerHeightRef = useRef(0);
   const lastDistanceFromBottomRef = useRef(0);
+  const paginatingRef = useRef(false);
+  const autoScrollTimersRef = useRef([]);
+  const scrollCooldownRef = useRef(false);
 
   // Midnight rollover: this counter increments when the calendar day changes,
   // forcing a re-render so "Today" / "Yesterday" labels stay accurate even if
@@ -372,34 +374,51 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
   }, [inputValue]);
 
   // Handle scroll for loading older messages (top 25%)
+  const [isLoadingNewer, setIsLoadingNewer] = useState(false);
+  const [scrolledPastPage, setScrolledPastPage] = useState(false);
+
   const handleScroll = (e) => {
     const container = e.target;
     
     // Track distance from bottom so we can use it to decide if new messages should scroll
-    lastDistanceFromBottomRef.current = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    lastDistanceFromBottomRef.current = distanceFromBottom;
+
+    // Show "Jump to Latest" when scrolled up more than one viewport height from the bottom
+    setScrolledPastPage(distanceFromBottom > container.clientHeight);
     
-    // Trigger pagination only when scrolling to the top
-    if (container.scrollTop < container.scrollHeight * 0.25 && !isLoadingMore && onLoadMoreMessages) {
+    // Trigger pagination only when scrolling to the top (skip during scroll cooldown)
+    if (container.scrollTop < container.scrollHeight * 0.25 && !isLoadingMore && !scrollCooldownRef.current && onLoadMoreMessages) {
       setIsLoadingMore(true);
+      paginatingRef.current = true;
+      autoScrollTimersRef.current.forEach(clearTimeout);
+      autoScrollTimersRef.current = [];
       onLoadMoreMessages();
       // Reset loading state after a delay
       setTimeout(() => setIsLoadingMore(false), 500);
     }
+
+    // Trigger loading newer messages when scrolling to the bottom in history mode
+    if (viewingHistory && distanceFromBottom < container.scrollHeight * 0.25 && !isLoadingNewer && !scrollCooldownRef.current && onLoadNewerMessages) {
+      setIsLoadingNewer(true);
+      paginatingRef.current = true;
+      autoScrollTimersRef.current.forEach(clearTimeout);
+      autoScrollTimersRef.current = [];
+      onLoadNewerMessages();
+      setTimeout(() => setIsLoadingNewer(false), 500);
+    }
   };
 
-  // Auto-scroll to bottom on new messages or initial load
+  // Auto-scroll to bottom on new messages
   useEffect(() => {
     const container = messagesContainerRef.current;
-    if (!container) {
-      return;
-    }
+    if (!container) return;
 
-    // Detect channel switch
+    // Reset baseline when channel changes
     if (channelId !== prevChannelIdRef.current) {
       prevChannelIdRef.current = channelId;
-      justSwitchedChannelRef.current = true;
-      lastMessageCountRef.current = 0;
-      return; // Don't scroll yet, wait for messages to load
+      lastMessageCountRef.current = messages.length;
+      return; // Scroll-to-bottom is handled by scrollToBottomTrigger
     }
 
     if (messages.length === 0) {
@@ -407,37 +426,61 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
       return;
     }
 
-    // After channel switch, scroll once we have the new messages
-    if (justSwitchedChannelRef.current) {
-      setTimeout(() => {
-        container.scrollTop = container.scrollHeight;
-      }, 0);
-      justSwitchedChannelRef.current = false;
+    // Skip auto-scroll when messages were loaded by pagination or "around" load
+    if (paginatingRef.current) {
+      paginatingRef.current = false;
       lastMessageCountRef.current = messages.length;
       return;
     }
 
     const countDifference = messages.length - lastMessageCountRef.current;
-    
-    // Auto-scroll on new message if user was near the bottom BEFORE the message arrived
-    // Check the distance from BEFORE the new message was added (tracked in handleScroll)
-    // This prevents large messages from forcing scroll when user is intentionally reading history
-    if (countDifference > 0 && countDifference < 30) {
+
+    // Auto-scroll only for small increments (1-4 new messages, i.e. real-time chat)
+    // Skip for bulk loads (channel switch, around load, pagination appends)
+    if (countDifference > 0 && countDifference < 5 && !viewingHistory) {
       if (lastDistanceFromBottomRef.current < 300) {
-        // User was near bottom before the message, so scroll down to show it
-        // Use multiple intervals to handle images/content rendering
+        autoScrollTimersRef.current.forEach(clearTimeout);
+        autoScrollTimersRef.current = [];
         const scrollIntervals = [0, 100, 200, 300, 500, 800, 1200];
         scrollIntervals.forEach(delay => {
-          setTimeout(() => {
+          const timer = setTimeout(() => {
             container.scrollTop = container.scrollHeight;
           }, delay);
+          autoScrollTimersRef.current.push(timer);
         });
       }
     }
-    // Don't scroll on pagination (30+ messages added at once)
-    
+
     lastMessageCountRef.current = messages.length;
   }, [messages, channelId]);
+
+  // Cancel auto-scroll timers when entering history/notification view
+  // and set scroll cooldown to prevent pagination from triggering immediately
+  useEffect(() => {
+    if (viewingHistory) {
+      autoScrollTimersRef.current.forEach(clearTimeout);
+      autoScrollTimersRef.current = [];
+      scrollCooldownRef.current = true;
+      setTimeout(() => { scrollCooldownRef.current = false; }, 1000);
+    }
+  }, [viewingHistory]);
+
+  // Scroll to bottom when Jump to Latest or channel switch is triggered
+  useEffect(() => {
+    if (scrollToBottomTrigger > 0) {
+      const container = messagesContainerRef.current;
+      if (container) {
+        autoScrollTimersRef.current.forEach(clearTimeout);
+        autoScrollTimersRef.current = [];
+        [0, 50, 150, 300].forEach(delay => {
+          const timer = setTimeout(() => {
+            container.scrollTop = container.scrollHeight;
+          }, delay);
+          autoScrollTimersRef.current.push(timer);
+        });
+      }
+    }
+  }, [scrollToBottomTrigger]);
 
   // Attach scroll listener
   useEffect(() => {
@@ -1177,6 +1220,21 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, channelId, c
           })
         )}
       </div>
+
+      {(viewingHistory || scrolledPastPage) && (
+        <button className="jump-to-latest-btn" onClick={() => {
+          if (viewingHistory) {
+            onJumpToLatest();
+          } else {
+            const container = messagesContainerRef.current;
+            if (container) container.scrollTop = container.scrollHeight;
+          }
+          setScrolledPastPage(false);
+        }}>
+          Jump to Latest
+          <span className="jump-arrow">↓</span>
+        </button>
+      )}
 
       {showEmojiPicker && emojiPickerFor === 'reaction' && (
         <div 
