@@ -247,7 +247,14 @@
   font-size: 14px;
   padding: 4px;
   margin-right: 4px;
-  transition: color 0.2s;
+  transition: color 0.2s, opacity 0.2s;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.channel-item:hover .channel-settings-icon {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .channel-settings-icon:hover {

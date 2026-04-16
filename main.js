@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, powerMonitor, dialog, session } = require('electron');
+const { app, BrowserWindow, ipcMain, powerMonitor, dialog, session, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -6,6 +6,11 @@ const isDev = !app.isPackaged;
 let mainWindow;
 let idleCheckInterval = null;
 const IDLE_THRESHOLD_SECONDS = 30; // 30 seconds of system inactivity
+
+// Required on Windows for setOverlayIcon to work (including in dev)
+if (process.platform === 'win32') {
+  app.setAppUserModelId('com.drt.desktop');
+}
 
 // ── CLI flags ─────────────────────────────────────────────────────────
 const argv = process.argv.slice(1);
@@ -190,10 +195,10 @@ app.on('ready', () => {
 
   createWindow();
 
-  // Trigger update check after window is ready
+  // Trigger update check after window is ready (always check on startup)
   if (mainWindow) {
     mainWindow.webContents.once('did-finish-load', () => {
-      performAutoUpdateCheck();
+      performAutoUpdateCheck(true);
     });
   }
 });
@@ -264,6 +269,23 @@ ipcMain.handle('window-close', () => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
 });
 
+// ── IPC handler: Taskbar badge overlay ────────────────────────────────
+ipcMain.handle('set-badge-count', (event, dataURL) => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!dataURL) {
+    console.log('[badge] Clearing overlay icon');
+    mainWindow.setOverlayIcon(null, '');
+    return;
+  }
+  try {
+    const image = nativeImage.createFromDataURL(dataURL);
+    console.log('[badge] Setting overlay icon, size:', image.getSize());
+    mainWindow.setOverlayIcon(image, 'notifications');
+  } catch (e) {
+    console.error('[badge] Failed to set overlay icon:', e);
+  }
+});
+
 // ── IPC handlers: Updater ─────────────────────────────────────────────
 ipcMain.handle('get-app-version', () => {
   return updater ? updater.CURRENT_VERSION : require('./package.json').version;
@@ -316,17 +338,33 @@ ipcMain.handle('install-update', (event, msiPath) => {
   }
 });
 
-// ── Auto-check for updates on startup ─────────────────────────────────
-function performAutoUpdateCheck() {
+// ── Auto-check for updates ────────────────────────────────────────────
+let updateCheckInterval = null;
+let lastUpdateCheckTime = 0;
+let pendingUpdateInfo = null; // stored so renderer can retrieve after login
+const UPDATE_CHECK_DEBOUNCE_MS = 30000; // 30s debounce between checks
+
+function performAutoUpdateCheck(force = false) {
   if (!updater || FLAG_NO_UPDATE) return;
-  if (!FLAG_CHECK_UPDATES && !updater.shouldCheckForUpdates()) return;
+  // Always respect the auto-check toggle (unless --check-updates CLI flag)
+  if (!FLAG_CHECK_UPDATES && !updater.getAutoCheckEnabled()) return;
+  // force=true: skip 24hr cooldown (used on startup)
+  // force=false: respect 24-hour cooldown (used on focus/interval)
+  if (!force && !FLAG_CHECK_UPDATES && !updater.shouldCheckForUpdates()) return;
+  // Debounce non-forced checks to prevent duplicates (e.g. focus right after startup)
+  const now = Date.now();
+  if (!force && now - lastUpdateCheckTime < UPDATE_CHECK_DEBOUNCE_MS) return;
+  lastUpdateCheckTime = now;
 
   // Delay check by 5 seconds to let the app finish loading
   setTimeout(async () => {
     try {
       const info = await updater.checkForUpdates();
-      if (info && mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('update-available', info);
+      if (info) {
+        pendingUpdateInfo = info;
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update-available', info);
+        }
       }
     } catch (e) {
       console.warn('[updater] Auto-check failed:', e.message);
@@ -334,7 +372,37 @@ function performAutoUpdateCheck() {
   }, 5000);
 }
 
+// Renderer can retrieve update info that arrived before it mounted
+ipcMain.handle('get-pending-update', () => {
+  const info = pendingUpdateInfo;
+  pendingUpdateInfo = null; // clear so it's not sent again
+  return info;
+});
+
+// Check for updates when the window regains focus (respects 24hr cooldown)
+function setupUpdateListeners() {
+  if (!updater || FLAG_NO_UPDATE) return;
+
+  // Re-check when the app window is focused (e.g. user returns to the app)
+  app.on('browser-window-focus', () => {
+    if (!updater.shouldCheckForUpdates()) return;
+    console.log('[updater] Window focused — checking for updates');
+    performAutoUpdateCheck();
+  });
+
+  // Periodic 24-hour check while the app is running
+  const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
+  updateCheckInterval = setInterval(() => {
+    if (!updater.shouldCheckForUpdates()) return;
+    console.log('[updater] 24-hour interval — checking for updates');
+    performAutoUpdateCheck();
+  }, CHECK_INTERVAL_MS);
+}
+
+setupUpdateListeners();
+
 app.on('window-all-closed', () => {
+  if (updateCheckInterval) clearInterval(updateCheckInterval);
   if (process.platform !== 'darwin') {
     app.quit();
   }

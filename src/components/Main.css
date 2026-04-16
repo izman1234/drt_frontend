@@ -474,6 +474,24 @@
   justify-content: center;
   border-radius: 4px;
   transition: background 0.2s, color 0.2s;
+  position: relative;
+}
+
+.settings-update-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 16px;
+  height: 16px;
+  background: #9d43e1;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
 }
 
 .settings-btn:hover {

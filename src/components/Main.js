@@ -72,6 +72,9 @@ function Main({ onLogout, identityKeys }) {
   const channelsRef = useRef([]);
   const toastRef = useRef(null);
   const pendingScrollMessageRef = useRef(null); // messageId to scroll to after channel switch
+  const isIdleRef = useRef(false); // whether the user is currently idle/away
+  const selectedChannelRef = useRef(null); // ref to current channel for idle detection
+  selectedChannelRef.current = selectedChannel;
   const [notifSettings, setNotifSettings] = useState(() => loadNotificationSettings(accountKey));
   const [serverBackupEnabled, setServerBackupEnabled] = useState(
     localStorage.getItem('drt_serverBackup') !== 'false'
@@ -91,6 +94,40 @@ function Main({ onLogout, identityKeys }) {
       }
     }
   }, [users, profileModalUser]);
+
+  // ── Taskbar badge overlay (mentions only) ──────────────────────────
+  useEffect(() => {
+    if (!window.electron?.setBadgeCount) return;
+
+    const count = Object.values(mentionCounts).reduce((sum, n) => sum + n, 0);
+
+    if (count <= 0) {
+      window.electron.setBadgeCount(null);
+      return;
+    }
+
+    const label = count > 9 ? '9+' : String(count);
+    const size = 16;
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    // Draw purple circle (matches mention-badge color)
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+    ctx.fillStyle = '#9d43e1';
+    ctx.fill();
+
+    // Draw white text
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `bold ${label.length > 1 ? 7 : 10}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, size / 2, size / 2 + 1);
+
+    window.electron.setBadgeCount(canvas.toDataURL('image/png'));
+  }, [mentionCounts]);
 
   // ── Updater state ───────────────────────────────────────────────────
   const [appVersion, setAppVersion] = useState('');
@@ -130,10 +167,32 @@ function Main({ onLogout, identityKeys }) {
     // Load auto-update preference
     window.electron.getAutoUpdateEnabled().then(v => setAutoUpdateEnabled(v)).catch(() => {});
     // Listen for auto-check update notifications from main process
-    window.electron.onUpdateAvailable((info) => {
+    let shownUpdateVersion = null;
+    const handleUpdateAvailable = (info) => {
+      if (!info || info.version === shownUpdateVersion) return;
+      shownUpdateVersion = info.version;
       setUpdateInfo(info);
       setUpdateStatus('idle');
-    });
+      // Show a toast so the user knows without opening settings
+      if (toastRef.current) {
+        toastRef.current.addToast({
+          title: 'Update Available',
+          body: `${info.releaseName || 'v' + info.version} is ready — go to Settings → Updates to install.`,
+          type: 'message',
+          onClick: () => {
+            setShowSettings(true);
+            setSettingsTab('updates');
+          },
+        });
+      }
+    };
+    window.electron.onUpdateAvailable(handleUpdateAvailable);
+    // Check if an update was found before this component mounted (e.g. during login)
+    if (window.electron.getPendingUpdate) {
+      window.electron.getPendingUpdate().then((info) => {
+        if (info) handleUpdateAvailable(info);
+      }).catch(() => {});
+    }
     // Listen for download progress
     window.electron.onUpdateDownloadProgress((progress) => {
       setUpdateProgress(progress.percent);
@@ -805,6 +864,7 @@ function Main({ onLogout, identityKeys }) {
         console.log('Setting user to idle (away from computer)');
         socket.emit('user:set-idle', { userId });
         isCurrentlyIdle = true;
+        isIdleRef.current = true;
       }
     };
 
@@ -813,6 +873,12 @@ function Main({ onLogout, identityKeys }) {
         console.log('Setting user back to active');
         socket.emit('user:set-active', { userId });
         isCurrentlyIdle = false;
+        isIdleRef.current = false;
+        // Clear mentions for the currently viewed channel on return from idle
+        const ch = selectedChannelRef.current;
+        if (ch) {
+          markChannelAsRead(ch.id);
+        }
       }
     };
 
@@ -914,6 +980,17 @@ function Main({ onLogout, identityKeys }) {
           }
           return [...prevMessages, message];
         });
+        // Track mentions in current channel while idle
+        if (isIdleRef.current && message.userId !== localStorage.getItem('userId')) {
+          const myId = localStorage.getItem('userId');
+          const currentNotifSettings = loadNotificationSettings(accountKey);
+          if (currentNotifSettings.mentions && myId && message.content && message.content.includes(`<@${myId}>`)) {
+            setMentionCounts(prev => ({
+              ...prev,
+              [channelId]: (prev[channelId] || 0) + 1
+            }));
+          }
+        }
       } else {
         // Message is in a different channel than the one we're viewing
         // Mark as unread only if the sender is not us
@@ -925,7 +1002,8 @@ function Main({ onLogout, identityKeys }) {
           });
           // Track @mention count
           const myId = localStorage.getItem('userId');
-          if (myId && message.content && message.content.includes(`<@${myId}>`)) {
+          const currentNotifSettings = loadNotificationSettings(accountKey);
+          if (currentNotifSettings.mentions && myId && message.content && message.content.includes(`<@${myId}>`)) {
             setMentionCounts(prev => ({
               ...prev,
               [channelId]: (prev[channelId] || 0) + 1
@@ -936,8 +1014,10 @@ function Main({ onLogout, identityKeys }) {
 
       // ── Desktop notification for new messages ────────────────────
       const myId = localStorage.getItem('userId');
-      const isMention = myId && message.content && message.content.includes(`<@${myId}>`);
+      const rawIsMention = myId && message.content && message.content.includes(`<@${myId}>`);
       const currentNotifSettings = loadNotificationSettings(accountKey);
+      // Only treat as a mention notification if the mentions toggle is on
+      const isMention = rawIsMention && currentNotifSettings.mentions;
       if (shouldNotifyForMessage({
         settings: currentNotifSettings,
         isWindowFocused: windowFocusedRef.current,
@@ -952,7 +1032,10 @@ function Main({ onLogout, identityKeys }) {
         const senderName = message.displayName || message.username || 'Someone';
         const bodyText = isMention
           ? `${senderName} mentioned you`
-          : `${senderName}: ${(message.content || '').replace(/<@[^>]+>/g, '@user').substring(0, 100)}`;
+          : `${senderName}: ${(message.content || '').replace(/<@([^>]+)>/g, (_, uid) => {
+            const u = users.find(u => u.id === uid);
+            return '@' + (u ? (u.displayName || u.username) : 'user');
+          }).substring(0, 100)}`;
 
         const mode = currentNotifSettings.displayMode || 'inapp';
         const showToast = mode === 'inapp' || mode === 'both';
@@ -1173,6 +1256,21 @@ function Main({ onLogout, identityKeys }) {
   };
 
   const markChannelAsRead = async (channelId) => {
+    // Don't clear mentions while idle — badge should persist until user returns
+    if (isIdleRef.current) {
+      // Still mark unread as read, but keep mention counts
+      setUnreadChannels(prev => {
+        const next = new Set(prev);
+        next.delete(channelId);
+        return next;
+      });
+      try {
+        await channelAPI.markChannelRead(channelId);
+      } catch (error) {
+        console.error('Error marking channel as read:', error);
+      }
+      return;
+    }
     setUnreadChannels(prev => {
       const next = new Set(prev);
       next.delete(channelId);
@@ -1914,6 +2012,9 @@ function Main({ onLogout, identityKeys }) {
         </div>
         <button onClick={() => { if (!showSettings) setSettingsTab('user'); setShowSettings(!showSettings); }} className="settings-btn" title="Settings">
           <Twemoji emoji="⚙️" size={18} />
+          {updateInfo && updateStatus !== 'up-to-date' && (
+            <span className="settings-update-dot">1</span>
+          )}
         </button>
       </div>
 

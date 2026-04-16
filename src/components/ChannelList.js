@@ -78,7 +78,7 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
   const textChannels = channels.filter(c => c.type === 'text');
   const voiceChannels = channels.filter(c => c.type === 'voice');
   
-  const [hoveredChannel, setHoveredChannel] = useState(null);
+
   const [editingChannel, setEditingChannel] = useState(null);
   const [editForm, setEditForm] = useState({ name: '', description: '' });
   const [draggedChannel, setDraggedChannel] = useState(null);
@@ -126,7 +126,6 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
     try {
       await channelAPI.updateChannel(channel.id, editForm.name, editForm.description);
       setEditingChannel(null);
-      setHoveredChannel(null);
       if (onChannelsChanged) onChannelsChanged();
     } catch (error) {
       console.error('Error updating channel:', error);
@@ -136,7 +135,6 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
 
   const handleCancelEdit = () => {
     setEditingChannel(null);
-    setHoveredChannel(null);
     setEditForm({ name: '', description: '' });
   };
 
@@ -245,8 +243,6 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
         onDragOver={(e) => handleDragOver(e, channel, groupType)}
         onDragLeave={handleDragLeave}
         onDrop={(e) => handleDrop(e, channel, groupType)}
-        onMouseEnter={() => setHoveredChannel(channel.id)}
-        onMouseLeave={() => setHoveredChannel(null)}
         onClick={() => onSelectChannel(channel)}
       >
         <span className="channel-icon">{channel.type === 'text' ? '#' : <Twemoji emoji="🔊" size={14} />}</span>
@@ -254,15 +250,13 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
         {mentions > 0 && !isActive && (
           <span className="mention-badge">{mentions}</span>
         )}
-        {hoveredChannel === channel.id && (
-          <button
-            className="channel-settings-icon"
-            onClick={(e) => handleSettingsClick(e, channel)}
-            title="Channel settings"
-          >
-            <Twemoji emoji="⚙️" size={14} />
-          </button>
-        )}
+        <button
+          className="channel-settings-icon"
+          onClick={(e) => handleSettingsClick(e, channel)}
+          title="Channel settings"
+        >
+          <Twemoji emoji="⚙️" size={14} />
+        </button>
       </div>
     );
   };

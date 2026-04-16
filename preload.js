@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('electron', {
   downloadUpdate: (updateInfo) => ipcRenderer.invoke('download-update', updateInfo),
   installUpdate: (msiPath) => ipcRenderer.invoke('install-update', msiPath),
   onUpdateAvailable: (callback) => {
+    ipcRenderer.removeAllListeners('update-available');
     ipcRenderer.on('update-available', (event, data) => callback(data));
   },
   onUpdateDownloadProgress: (callback) => {
@@ -44,4 +45,6 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.on('window-maximized', () => callback(true));
     ipcRenderer.on('window-unmaximized', () => callback(false));
   },
-});
+  // ── Taskbar badge ────────────────────────────────────────────────
+  setBadgeCount: (dataURL) => ipcRenderer.invoke('set-badge-count', dataURL),  // ── Pending update info ───────────────────────────────────────
+  getPendingUpdate: () => ipcRenderer.invoke('get-pending-update'),});
