@@ -233,7 +233,7 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
       );
     }
 
-    const mentions = mentionCounts[channel.id] || 0;
+    const notifications = mentionCounts[channel.id] || 0;
 
     return (
       <div
@@ -247,8 +247,8 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
       >
         <span className="channel-icon">{channel.type === 'text' ? '#' : <Twemoji emoji="🔊" size={14} />}</span>
         <span className="channel-name">{channel.name}</span>
-        {mentions > 0 && !isActive && (
-          <span className="mention-badge">{mentions}</span>
+        {notifications > 0 && (
+          <span className="mention-badge">{notifications}</span>
         )}
         <button
           className="channel-settings-icon"

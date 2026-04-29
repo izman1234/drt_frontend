@@ -1015,6 +1015,9 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, onLoadNewerM
             const prevMsg = index > 0 ? messages[index - 1] : null;
             const prevDay = prevMsg ? toLocalDateOnly(parseTimestamp(prevMsg.createdAt)) : null;
             const showDaySeparator = !prevDay || msgDay.getTime() !== prevDay.getTime();
+            const isPriorityMessage =
+              (message.content && message.content.includes(`<@${currentUserId}>`)) ||
+              (message.userId !== currentUserId && message.repliedToUserId === currentUserId);
             return (
               <React.Fragment key={message.id}>
                 {showDaySeparator && (
@@ -1026,7 +1029,7 @@ function MessageArea({ messages, onSendMessage, onLoadMoreMessages, onLoadNewerM
                 )}
               <div
                 data-message-id={message.id}
-                className={`message ${message.userId === currentUserId ? 'own-message' : ''}${message.content && message.content.includes(`<@${currentUserId}>`) ? ' mentioned' : ''}`}
+                className={`message ${message.userId === currentUserId ? 'own-message' : ''}${isPriorityMessage ? ' mentioned' : ''}`}
                 onContextMenu={(e) => handleMessageRightClick(e, message)}
               >
                 <div className="message-avatar">

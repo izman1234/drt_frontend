@@ -70,14 +70,18 @@ export function sendNotification({ title, body, icon, channelId, onClick }) {
  * @param {string} params.messageUserId   - Who sent the message
  * @param {string} params.currentUserId   - The local user's ID
  * @param {boolean} params.isMention      - Whether the message contains an @mention of current user
+ * @param {boolean} params.isReply        - Whether the message replies to current user's message
  * @returns {boolean}
  */
-export function shouldNotifyForMessage({ settings, isWindowFocused, messageChannelId, selectedChannelId, messageUserId, currentUserId, isMention }) {
+export function shouldNotifyForMessage({ settings, isWindowFocused, messageChannelId, selectedChannelId, messageUserId, currentUserId, isMention, isReply }) {
   if (!settings.enabled) return false;
   if (messageUserId === currentUserId) return false;
 
   // @ mentions always notify (if mention toggle is on), regardless of level
   if (isMention && settings.mentions) return true;
+
+  // Replies to my messages always notify (if reply toggle is on), regardless of level
+  if (isReply && settings.replies) return true;
 
   const level = settings.level;
 

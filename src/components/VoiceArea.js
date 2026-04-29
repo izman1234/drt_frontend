@@ -26,6 +26,10 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
   const currentMuteStateRef = useRef(isMuted);
   const speakingDetectionRef = useRef(null); // ID for cancelling setInterval
   const voiceMembersRef = useRef(voiceMembers); // Keep fresh reference for speaking detection
+  const userVolumesRef = useRef(userVolumes || {});
+  const userMutesRef = useRef(userMutes || {});
+  const isDeafenedRef = useRef(isDeafened);
+  const peerUserIdsRef = useRef({}); // { socketId: userId } for applying saved per-user settings
   const isJoinedRef = useRef(false); // Track if we're actively in a voice channel
   const handlersRef = useRef({}); // Store registered socket handler references for cleanup
   const onSpeakingChangeRef = useRef(onSpeakingChange);
@@ -43,6 +47,18 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
   useEffect(() => {
     voiceMembersRef.current = voiceMembers;
   }, [voiceMembers]);
+
+  useEffect(() => {
+    userVolumesRef.current = userVolumes || {};
+  }, [userVolumes]);
+
+  useEffect(() => {
+    userMutesRef.current = userMutes || {};
+  }, [userMutes]);
+
+  useEffect(() => {
+    isDeafenedRef.current = isDeafened;
+  }, [isDeafened]);
 
   useEffect(() => {
     onSpeakingChangeRef.current = onSpeakingChange;
@@ -85,6 +101,32 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       document.removeEventListener('click', resumeOnInteraction, { capture: true });
       document.removeEventListener('keydown', resumeOnInteraction, { capture: true });
     };
+  }, []);
+
+  const applyRemotePeerSettings = useCallback((peerSocketId, remoteGain = remoteGainNodesRef.current[peerSocketId]) => {
+    if (!peerSocketId || !remoteGain || !remoteGain.gainNode) return;
+
+    const member = (voiceMembersRef.current || []).find(m => m.socketId === peerSocketId);
+    if (member?.id) {
+      peerUserIdsRef.current[peerSocketId] = member.id;
+    }
+
+    if (isDeafenedRef.current) {
+      remoteGain.gainNode.gain.value = 0;
+      return;
+    }
+
+    const peerUserId = member?.id || peerUserIdsRef.current[peerSocketId];
+    if (!peerUserId) {
+      remoteGain.gainNode.gain.value = 1;
+      return;
+    }
+
+    const isMutedByUser = !!userMutesRef.current[peerUserId];
+    const volume = userVolumesRef.current[peerUserId] !== undefined
+      ? userVolumesRef.current[peerUserId]
+      : 1;
+    remoteGain.gainNode.gain.value = isMutedByUser ? 0 : volumeToGain(volume);
   }, []);
 
   const createPeerConnection = useCallback((peerSocketId) => {
@@ -141,7 +183,9 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
       // Apply persisted output volume from voice settings
       const vs = loadVoiceSettings();
       const { gainNode, compressor, makeupGain } = createRemoteAudioChain(remoteAudioCtx, source, vs.outputVolume);
-      remoteGainNodesRef.current[peerSocketId] = { gainNode, compressor, makeupGain };
+      const remoteGain = { gainNode, compressor, makeupGain };
+      remoteGainNodesRef.current[peerSocketId] = remoteGain;
+      applyRemotePeerSettings(peerSocketId, remoteGain);
 
       // Keep a muted audio element attached to the stream for lifecycle management
       let audioEl = audioElementsRef.current[peerSocketId];
@@ -163,21 +207,17 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
     };
 
     return pc;
-  }, [socket]);
+  }, [socket, applyRemotePeerSettings]);
 
   // Apply per-user volume/mute settings via gain nodes
   useEffect(() => {
-    if (isDeafened) return; // Don't override deafen with per-user settings
     voiceMembers.forEach(member => {
-      const peerSocketId = member.socketId;
-      const remoteGain = remoteGainNodesRef.current[peerSocketId];
-      if (remoteGain && remoteGain.gainNode) {
-        const isMutedByUser = !!(userMutes && userMutes[member.id]);
-        const volume = (userVolumes && userVolumes[member.id] !== undefined) ? userVolumes[member.id] : 1;
-        remoteGain.gainNode.gain.value = isMutedByUser ? 0 : volumeToGain(volume);
+      if (member.socketId) {
+        peerUserIdsRef.current[member.socketId] = member.id;
+        applyRemotePeerSettings(member.socketId);
       }
     });
-  }, [userVolumes, userMutes, voiceMembers, isDeafened]);
+  }, [applyRemotePeerSettings, userVolumes, userMutes, voiceMembers, isDeafened]);
 
   useEffect(() => {
     if (socket && channel) {
@@ -235,16 +275,13 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
     } else {
       // When undeafening, restore per-user mute and volume settings via gain nodes
       voiceMembers.forEach(member => {
-        const peerSocketId = member.socketId;
-        const remoteGain = remoteGainNodesRef.current[peerSocketId];
-        if (remoteGain && remoteGain.gainNode) {
-          const isMutedByUser = !!(userMutes && userMutes[member.id]);
-          const volume = (userVolumes && userVolumes[member.id] !== undefined) ? userVolumes[member.id] : 1;
-          remoteGain.gainNode.gain.value = isMutedByUser ? 0 : volumeToGain(volume);
+        if (member.socketId) {
+          peerUserIdsRef.current[member.socketId] = member.id;
+          applyRemotePeerSettings(member.socketId);
         }
       });
     }
-  }, [isDeafened, voiceMembers, userMutes, userVolumes]);
+  }, [isDeafened, voiceMembers, userMutes, userVolumes, applyRemotePeerSettings]);
 
   
 
@@ -339,6 +376,7 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
     dataArrayRef.current = {};
     audioFiltersRef.current = {};
     remoteSpeakingRef.current = {};
+    peerUserIdsRef.current = {};
     setSpeakingMap({});
     if (onSpeakingChangeRef.current) {
       onSpeakingChangeRef.current({});
@@ -405,6 +443,7 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
     dataArrayRef.current = {};
     audioFiltersRef.current = {};
     remoteSpeakingRef.current = {};
+    peerUserIdsRef.current = {};
     setSpeakingMap({});
     if (onSpeakingChangeRef.current) {
       onSpeakingChangeRef.current({});
@@ -463,7 +502,11 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
 
       // Define all socket handlers inline, capturing fresh state via refs
       const handlers = {
-        handlePeerJoined: async ({ socketId }) => {
+        handlePeerJoined: async ({ socketId, userId: peerUserId }) => {
+          if (peerUserId) {
+            peerUserIdsRef.current[socketId] = peerUserId;
+          }
+
           // Wait briefly so the joining peer can register listeners via handleCurrentPeers first
           await new Promise(resolve => setTimeout(resolve, 500));
 
@@ -564,6 +607,7 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
             try { remoteGain.gainNode.disconnect(); } catch (e) {}
             delete remoteGainNodesRef.current[socketId];
           }
+          delete peerUserIdsRef.current[socketId];
           const audioEl = audioElementsRef.current[socketId];
           if (audioEl) {
             try { audioEl.pause(); } catch (e) {}
@@ -585,6 +629,9 @@ function VoiceArea({ socket, channel, onLeave, onSpeakingChange, isMuted, isDeaf
 
         handleCurrentPeers: async (peers) => {
           for (const peer of peers) {
+            if (peer.userId) {
+              peerUserIdsRef.current[peer.socketId] = peer.userId;
+            }
             if (peersRef.current[peer.socketId]) continue;
             await new Promise(resolve => setTimeout(resolve, 50));
             const pc = createPeerConnection(peer.socketId);

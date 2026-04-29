@@ -60,7 +60,7 @@ function Main({ onLogout, identityKeys }) {
   const [userVolumes, setUserVolumes] = useState({}); // { userId: 0-2 } (slider value, squared for gain)
   const [userMutes, setUserMutes] = useState({}); // { userId: boolean }
   const [unreadChannels, setUnreadChannels] = useState(new Set()); // Set of channel IDs with unread messages
-  const [mentionCounts, setMentionCounts] = useState({}); // { channelId: number }
+  const [mentionCounts, setMentionCounts] = useState({}); // { channelId: mention/reply notification count }
   const [typingUsers, setTypingUsers] = useState({}); // { "channelId:userId": { channelId, userId, displayName } }
   const [profileModalUser, setProfileModalUser] = useState(null);
   const [profileModalPosition, setProfileModalPosition] = useState(null);
@@ -73,7 +73,7 @@ function Main({ onLogout, identityKeys }) {
   const toastRef = useRef(null);
   const pendingScrollMessageRef = useRef(null); // messageId to scroll to after channel switch
   const isIdleRef = useRef(false); // whether the user is currently idle/away
-  const selectedChannelRef = useRef(null); // ref to current channel for idle detection
+  const selectedChannelRef = useRef(null); // ref to current channel for focus/idle callbacks
   selectedChannelRef.current = selectedChannel;
   const [notifSettings, setNotifSettings] = useState(() => loadNotificationSettings(accountKey));
   const [serverBackupEnabled, setServerBackupEnabled] = useState(
@@ -95,7 +95,7 @@ function Main({ onLogout, identityKeys }) {
     }
   }, [users, profileModalUser]);
 
-  // ── Taskbar badge overlay (mentions only) ──────────────────────────
+  // ── Taskbar badge overlay (mentions/replies) ───────────────────────
   useEffect(() => {
     if (!window.electron?.setBadgeCount) return;
 
@@ -420,7 +420,7 @@ function Main({ onLogout, identityKeys }) {
       localStorage.setItem('userId', verifyRes.userId);
       localStorage.setItem('username', verifyRes.username);
 
-      // 5a. Push any locally-changed display name, name color, or avatar to this server
+      // 5a. Push locally-owned account profile fields to this server
       const localDisplayName = localStorage.getItem(`drt_displayName_${accountKey}`) || localStorage.getItem('drt_displayName');
       if (localDisplayName && localDisplayName !== verifyRes.displayName) {
         try { await userAPI.updateDisplayName(localDisplayName); } catch {}
@@ -437,6 +437,11 @@ function Main({ onLogout, identityKeys }) {
       const localAvatar = localStorage.getItem(`drt_profilePicture_${accountKey}`);
       if (localAvatar) {
         try { await userAPI.updateProfilePicture(localAvatar); } catch {}
+      }
+
+      const localBio = localStorage.getItem(`drt_bio_${accountKey}`);
+      if (localBio != null) {
+        try { await userAPI.updateBio(localBio); } catch {}
       }
 
       const localCustomStatus = localStorage.getItem(`drt_customStatus_${accountKey}`);
@@ -874,7 +879,7 @@ function Main({ onLogout, identityKeys }) {
         socket.emit('user:set-active', { userId });
         isCurrentlyIdle = false;
         isIdleRef.current = false;
-        // Clear mentions for the currently viewed channel on return from idle
+        // Mark the currently viewed channel as read when activity returns
         const ch = selectedChannelRef.current;
         if (ch) {
           markChannelAsRead(ch.id);
@@ -971,6 +976,16 @@ function Main({ onLogout, identityKeys }) {
         return next;
       });
 
+      const myId = localStorage.getItem('userId');
+      const currentNotifSettings = loadNotificationSettings(accountKey);
+      const isMessageFromMe = message.userId === myId;
+      const rawIsMention = myId && message.content && message.content.includes(`<@${myId}>`);
+      const rawIsReply = myId && message.repliedToUserId === myId;
+      // Only treat these as priority notifications if their toggles are on.
+      const isMention = rawIsMention && currentNotifSettings.mentions;
+      const isReply = rawIsReply && currentNotifSettings.replies;
+      const shouldCountBadge = !isMessageFromMe && (isMention || isReply);
+
       if (selectedChannel && selectedChannel.id === channelId) {
         setMessages(prevMessages => {
           // Check if message already exists to prevent duplicates
@@ -980,30 +995,24 @@ function Main({ onLogout, identityKeys }) {
           }
           return [...prevMessages, message];
         });
-        // Track mentions in current channel while idle
-        if (isIdleRef.current && message.userId !== localStorage.getItem('userId')) {
-          const myId = localStorage.getItem('userId');
-          const currentNotifSettings = loadNotificationSettings(accountKey);
-          if (currentNotifSettings.mentions && myId && message.content && message.content.includes(`<@${myId}>`)) {
-            setMentionCounts(prev => ({
-              ...prev,
-              [channelId]: (prev[channelId] || 0) + 1
-            }));
-          }
+        // Track mentions/replies in current channel while the app is unfocused
+        if (!windowFocusedRef.current && shouldCountBadge) {
+          setMentionCounts(prev => ({
+            ...prev,
+            [channelId]: (prev[channelId] || 0) + 1
+          }));
         }
       } else {
         // Message is in a different channel than the one we're viewing
         // Mark as unread only if the sender is not us
-        if (message.userId !== localStorage.getItem('userId')) {
+        if (!isMessageFromMe) {
           setUnreadChannels(prev => {
             const next = new Set(prev);
             next.add(channelId);
             return next;
           });
-          // Track @mention count
-          const myId = localStorage.getItem('userId');
-          const currentNotifSettings = loadNotificationSettings(accountKey);
-          if (currentNotifSettings.mentions && myId && message.content && message.content.includes(`<@${myId}>`)) {
+          // Track @mention/reply count
+          if (shouldCountBadge) {
             setMentionCounts(prev => ({
               ...prev,
               [channelId]: (prev[channelId] || 0) + 1
@@ -1013,11 +1022,6 @@ function Main({ onLogout, identityKeys }) {
       }
 
       // ── Desktop notification for new messages ────────────────────
-      const myId = localStorage.getItem('userId');
-      const rawIsMention = myId && message.content && message.content.includes(`<@${myId}>`);
-      const currentNotifSettings = loadNotificationSettings(accountKey);
-      // Only treat as a mention notification if the mentions toggle is on
-      const isMention = rawIsMention && currentNotifSettings.mentions;
       if (shouldNotifyForMessage({
         settings: currentNotifSettings,
         isWindowFocused: windowFocusedRef.current,
@@ -1026,12 +1030,15 @@ function Main({ onLogout, identityKeys }) {
         messageUserId: message.userId,
         currentUserId: myId,
         isMention,
+        isReply,
       })) {
         const channel = channels.find(c => c.id === channelId);
         const channelName = channel ? channel.name : 'Unknown';
         const senderName = message.displayName || message.username || 'Someone';
         const bodyText = isMention
           ? `${senderName} mentioned you`
+          : isReply
+          ? `${senderName} replied to your message`
           : `${senderName}: ${(message.content || '').replace(/<@([^>]+)>/g, (_, uid) => {
             const u = users.find(u => u.id === uid);
             return '@' + (u ? (u.displayName || u.username) : 'user');
@@ -1090,7 +1097,7 @@ function Main({ onLogout, identityKeys }) {
     };
 
     // Listen for reaction added
-    const handleReactionAdded = ({ messageId, reactions, reactedByUserId, messageOwnerId, channelId }) => {
+    const handleReactionAdded = ({ messageId, reactions, reactedByUserId, messageOwnerId, channelId, emoji, reactionAdded = true }) => {
       console.log('Reaction added:', messageId, reactions);
       setMessages(prevMessages =>
         prevMessages.map(m =>
@@ -1103,14 +1110,14 @@ function Main({ onLogout, identityKeys }) {
       // ── Desktop notification for reactions on my messages ──────
       const myId = localStorage.getItem('userId');
       const currentNotifSettings = loadNotificationSettings(accountKey);
-      if (currentNotifSettings.enabled && currentNotifSettings.reactions &&
+      if (reactionAdded && currentNotifSettings.enabled && currentNotifSettings.reactions &&
           messageOwnerId === myId && reactedByUserId && reactedByUserId !== myId) {
         const reactor = users.find(u => u.id === reactedByUserId);
         const reactorName = reactor ? (reactor.displayName || reactor.username) : 'Someone';
-        const latestEmoji = reactions && reactions.length > 0
+        const fallbackEmoji = reactions && reactions.length > 0
           ? reactions.find(r => r.userIds && r.userIds.includes(reactedByUserId))
           : null;
-        const emoji = latestEmoji ? latestEmoji.emoji : '';
+        const reactionEmoji = emoji || (fallbackEmoji ? fallbackEmoji.emoji : '');
 
         const mode = currentNotifSettings.displayMode || 'inapp';
         const showToast = mode === 'inapp' || mode === 'both';
@@ -1119,7 +1126,7 @@ function Main({ onLogout, identityKeys }) {
         if (showToast && toastRef.current) {
           toastRef.current.addToast({
             title: reactorName,
-            body: `Reacted ${emoji} to your message`,
+            body: `Reacted ${reactionEmoji} to your message`,
             avatar: reactor ? reactor.profilePicture : null,
             nameColor: reactor ? reactor.nameColor : null,
             type: 'reaction',
@@ -1135,7 +1142,7 @@ function Main({ onLogout, identityKeys }) {
         if (showNative) {
           sendNotification({
             title: 'Reaction',
-            body: `${reactorName} reacted ${emoji} to your message`,
+            body: `${reactorName} reacted ${reactionEmoji} to your message`,
           });
         }
       }
@@ -1231,8 +1238,18 @@ function Main({ onLogout, identityKeys }) {
       if (response.data.success) {
         setUsername(response.data.user.username);
         if (response.data.user.bio != null) {
-          localStorage.setItem(`drt_bio_${accountKey}`, response.data.user.bio);
-          setSettingsForm(prev => ({ ...prev, bio: response.data.user.bio }));
+          const localBio = localStorage.getItem(`drt_bio_${accountKey}`);
+          if (localBio != null) {
+            setSettingsForm(prev => ({ ...prev, bio: localBio }));
+            if (localBio !== response.data.user.bio) {
+              userAPI.updateBio(localBio).catch(err =>
+                console.error('Failed to sync local bio to backend:', err)
+              );
+            }
+          } else {
+            localStorage.setItem(`drt_bio_${accountKey}`, response.data.user.bio);
+            setSettingsForm(prev => ({ ...prev, bio: response.data.user.bio }));
+          }
         }
         if (response.data.user.customStatus != null) {
           localStorage.setItem(`drt_customStatus_${accountKey}`, response.data.user.customStatus);
@@ -1256,8 +1273,8 @@ function Main({ onLogout, identityKeys }) {
   };
 
   const markChannelAsRead = async (channelId) => {
-    // Don't clear mentions while idle — badge should persist until user returns
-    if (isIdleRef.current) {
+    // Don't clear mentions while unfocused - badge should persist until user returns
+    if (!windowFocusedRef.current) {
       // Still mark unread as read, but keep mention counts
       setUnreadChannels(prev => {
         const next = new Set(prev);
@@ -1738,6 +1755,7 @@ function Main({ onLogout, identityKeys }) {
     };
 
     const handleFocusChange = (isVisible) => {
+      const wasFocused = windowFocused;
       windowFocused = isVisible;
       windowFocusedRef.current = isVisible;
       if (!isVisible) {
@@ -1747,6 +1765,12 @@ function Main({ onLogout, identityKeys }) {
         // Start watching for new GIF images added while unfocused
         startObserver();
       } else {
+        if (!wasFocused) {
+          const ch = selectedChannelRef.current;
+          if (ch) {
+            markChannelAsRead(ch.id);
+          }
+        }
         // Stop watching for new images
         stopObserver();
         // Window gained focus - resume all GIFs
@@ -2386,6 +2410,23 @@ function Main({ onLogout, identityKeys }) {
                             <span className="notif-toggle-label-text">@ Mention Notifications</span>
                           </label>
                           <p className="notif-description">Notify when someone @mentions you (always, regardless of level).</p>
+                        </div>
+
+                        <div className="settings-form-section">
+                          <label className="notif-toggle-row">
+                            <input
+                              type="checkbox"
+                              checked={notifSettings.replies}
+                              onChange={(e) => {
+                                const updated = updateNotificationSettings({ replies: e.target.checked }, accountKey);
+                                setNotifSettings(updated);
+                              }}
+                              disabled={!notifSettings.enabled}
+                              className="notif-toggle-input"
+                            />
+                            <span className="notif-toggle-label-text">Reply Notifications</span>
+                          </label>
+                          <p className="notif-description">Notify when someone replies to your messages (always, regardless of level).</p>
                         </div>
 
                         <div className="settings-form-section">

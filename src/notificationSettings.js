@@ -11,6 +11,7 @@ export const NOTIF_DEFAULTS = {
   enabled: true,           // Master toggle for desktop notifications
   reactions: true,         // Notify when someone reacts to my messages
   mentions: true,          // Notify when someone @mentions me
+  replies: true,           // Notify when someone replies to my messages
   level: 2,               // 1 = none, 2 = current channel, 3 = all channels
   voice: true,             // Notify when someone joins/leaves my voice channel
   displayMode: 'inapp',   // 'inapp' = in-app only, 'desktop' = native only, 'both' = smart mix

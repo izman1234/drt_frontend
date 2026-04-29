@@ -956,7 +956,7 @@
   color: #e9d5ff;
 }
 
-/* Highlighted message when you are mentioned */
+/* Highlighted message when you are mentioned or directly replied to */
 .message.mentioned {
   background: rgba(157, 67, 225, 0.08);
   border-left: 3px solid #9d43e1;
