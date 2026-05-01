@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, powerMonitor, dialog, session, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, powerMonitor, dialog, session, nativeImage, desktopCapturer } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -6,6 +6,7 @@ const isDev = !app.isPackaged;
 let mainWindow;
 let idleCheckInterval = null;
 const IDLE_THRESHOLD_SECONDS = 30; // 30 seconds of system inactivity
+let pendingDisplayMediaSourceId = null;
 
 // Required on Windows for setOverlayIcon to work (including in dev)
 if (process.platform === 'win32') {
@@ -193,6 +194,28 @@ app.on('ready', () => {
     }
   });
 
+  if (session.defaultSession.setDisplayMediaRequestHandler) {
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+      desktopCapturer.getSources({
+        types: ['screen', 'window'],
+        thumbnailSize: { width: 360, height: 220 },
+        fetchWindowIcons: true,
+      }).then((sources) => {
+        const selected = sources.find(source => source.id === pendingDisplayMediaSourceId) || sources[0];
+        pendingDisplayMediaSourceId = null;
+        if (!selected) {
+          callback({});
+          return;
+        }
+        callback({ video: selected });
+      }).catch((e) => {
+        pendingDisplayMediaSourceId = null;
+        console.error('Failed to resolve display media source:', e);
+        callback({});
+      });
+    });
+  }
+
   createWindow();
 
   // Trigger update check after window is ready (always check on startup)
@@ -237,6 +260,40 @@ ipcMain.handle('import-backup', async () => {
 });
 
 // ── IPC handlers: TOFU certificate management ─────────────────────────
+ipcMain.handle('get-desktop-sources', async (_event, options = {}) => {
+  try {
+    const types = Array.isArray(options.types) && options.types.length ? options.types : ['screen', 'window'];
+    const sources = await desktopCapturer.getSources({
+      types,
+      thumbnailSize: { width: 360, height: 220 },
+      fetchWindowIcons: true,
+    });
+    return {
+      success: true,
+      sources: sources.map(source => ({
+        id: source.id,
+        name: source.name,
+        displayId: source.display_id || null,
+        thumbnail: source.thumbnail ? source.thumbnail.toDataURL() : null,
+        appIcon: source.appIcon ? source.appIcon.toDataURL() : null,
+      })),
+    };
+  } catch (e) {
+    console.error('get-desktop-sources error:', e);
+    return { success: false, error: e.message, sources: [] };
+  }
+});
+
+ipcMain.handle('set-screen-share-source', (_event, sourceId) => {
+  pendingDisplayMediaSourceId = sourceId || null;
+  return { success: true };
+});
+
+ipcMain.handle('clear-screen-share-source', () => {
+  pendingDisplayMediaSourceId = null;
+  return { success: true };
+});
+
 ipcMain.handle('trust-certificate', async (event, hostname, fingerprint) => {
   trustedCerts[hostname] = fingerprint;
   saveTrustedCerts();

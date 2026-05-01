@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('electron', {
   // ── Identity backup export / import ──────────────────────────────
   exportBackup: (data) => ipcRenderer.invoke('export-backup', data),
   importBackup: () => ipcRenderer.invoke('import-backup'),
+  getDesktopSources: (options) => ipcRenderer.invoke('get-desktop-sources', options),
+  setScreenShareSource: (sourceId) => ipcRenderer.invoke('set-screen-share-source', sourceId),
+  clearScreenShareSource: () => ipcRenderer.invoke('clear-screen-share-source'),
   // ── TOFU certificate management ──────────────────────────────────
   onTofuNewCert: (callback) => {
     ipcRenderer.on('tofu-new-cert', (event, data) => callback(data));

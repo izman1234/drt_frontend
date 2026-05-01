@@ -5,9 +5,11 @@ import Twemoji from './Twemoji';
 import './ChannelList.css';
 
 // Memoized component to prevent unnecessary re-renders
-const VoiceMemberComponent = memo(({ member, isSelected, onSelect, isSpeaking, nameColor, getMemberProfilePicture, getMemberInitial, userVolumes, userMutes, onVolumeChange, onToggleMute, currentUserId }) => {
+const VoiceMemberComponent = memo(({ member, mediaState, isSelected, onSelect, isSpeaking, nameColor, getMemberProfilePicture, getMemberInitial, userVolumes, userMutes, onVolumeChange, onToggleMute, currentUserId }) => {
   const profilePicture = getMemberProfilePicture(member);
   const isCurrentUser = member.id === currentUserId;
+  const cameraOn = !!(mediaState?.cameraOn || member.cameraOn);
+  const screenOn = !!(mediaState?.screenOn || member.screenOn);
   const handleClick = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -32,6 +34,8 @@ const VoiceMemberComponent = memo(({ member, isSelected, onSelect, isSpeaking, n
         </div>
         <span className="voice-member-name" style={{ color: nameColor || '#a78bba' }}>{member.displayName || member.username || member.id}</span>
         <span className="voice-member-icons">
+          {cameraOn && <span className="status-icon camera" title="Camera on"><Twemoji emoji="📹" size={12} /></span>}
+          {screenOn && <span className="status-icon live" title="Screen sharing">LIVE</span>}
           {member.isMuted && <span className="status-icon muted" title="Muted"><Twemoji emoji="🔇" size={14} /></span>}
           {member.isDeafened && <span className="status-icon deafened" title="Deafened"><Twemoji emoji="🔕" size={14} /></span>}
         </span>
@@ -74,7 +78,7 @@ const VoiceMemberComponent = memo(({ member, isSelected, onSelect, isSpeaking, n
 
 VoiceMemberComponent.displayName = 'VoiceMember';
 
-function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersByChannel = {}, activeVoiceChannel = null, onChannelsChanged, speakingUsers = {}, selectedUserForControl, onSelectUserForControl, userVolumes, userMutes, onVolumeChange, onToggleMute, currentUserId, unreadChannels = new Set(), mentionCounts = {} }) {
+function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersByChannel = {}, mediaStatesByChannel = {}, activeVoiceChannel = null, onChannelsChanged, speakingUsers = {}, selectedUserForControl, onSelectUserForControl, userVolumes, userMutes, onVolumeChange, onToggleMute, currentUserId, unreadChannels = new Set(), mentionCounts = {} }) {
   const textChannels = channels.filter(c => c.type === 'text');
   const voiceChannels = channels.filter(c => c.type === 'voice');
   
@@ -293,6 +297,7 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
             <h4>Voice Channels</h4>
             {voiceChannels.map(channel => {
               const membersForChannel = voiceMembersByChannel[channel.id] || [];
+              const mediaStatesForChannel = mediaStatesByChannel[channel.id] || {};
               return (
               <div key={channel.id} className="channel-with-members">
                 {renderChannelItem(channel, activeVoiceChannel?.id === channel.id, 'voice')}
@@ -301,6 +306,7 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
                     <VoiceMemberComponent 
                       key={member.id} 
                       member={member}
+                      mediaState={mediaStatesForChannel[member.id]}
                       isSelected={selectedUserForControl?.id === member.id}
                       onSelect={onSelectUserForControl}
                       isSpeaking={speakingUsers[member.id]}

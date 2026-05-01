@@ -398,9 +398,20 @@
   background: rgba(255, 71, 87, 0.2);
 }
 
+.voice-btn.camera-on,
+.voice-btn.screen-on {
+  color: #ffffff;
+  background: rgba(67, 181, 129, 0.24);
+}
+
 .voice-btn.muted:hover,
 .voice-btn.deafened:hover {
   background: rgba(255, 71, 87, 0.3);
+}
+
+.voice-btn.camera-on:hover,
+.voice-btn.screen-on:hover {
+  background: rgba(67, 181, 129, 0.34);
 }
 
 .user-profile {

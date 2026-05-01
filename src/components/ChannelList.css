@@ -216,6 +216,22 @@
   font-size: 12px;
 }
 
+.voice-member-icons .status-icon.camera {
+  color: #e9d5ff;
+  line-height: 1;
+}
+
+.voice-member-icons .status-icon.live {
+  background: #f23f42;
+  color: #ffffff;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1.25;
+}
+
 .voice-member-icons .status-icon.muted {
   color: #f04747;
 }

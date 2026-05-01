@@ -11,6 +11,7 @@ import ColorPicker from './ColorPicker';
 import ServerList from './ServerList';
 import CustomModal from './CustomModal';
 import VoiceSettings from './VoiceSettings';
+import VideoSettings from './VideoSettings';
 import ProfileModal from './ProfileModal';
 import ToastContainer from './ToastNotification';
 import Twemoji from './Twemoji';
@@ -42,6 +43,9 @@ function Main({ onLogout, identityKeys }) {
   const [voiceMembersByChannel, setVoiceMembersByChannel] = useState({});
   const [socket, setSocket] = useState(null);
   const [activeVoiceChannel, setActiveVoiceChannel] = useState(null);
+  const [voiceMediaStatesByChannel, setVoiceMediaStatesByChannel] = useState({});
+  const [localVoiceMediaState, setLocalVoiceMediaState] = useState({ cameraOn: false, screenOn: false });
+  const [callViewMode, setCallViewMode] = useState('stage');
   const [userDisplayName, setUserDisplayName] = useState(localStorage.getItem(`drt_displayName_${accountKey}`) || localStorage.getItem('drt_displayName') || 'User');
   const [username, setUsername] = useState(localStorage.getItem('drt_username') || localStorage.getItem('username') || '');
   const [userNameColor, setUserNameColor] = useState(localStorage.getItem(`drt_nameColor_${accountKey}`) || '#a78bba');
@@ -69,6 +73,9 @@ function Main({ onLogout, identityKeys }) {
   const windowFocusedRef = useRef(document.hasFocus());
   const prevVoiceMembersRef = useRef({}); // { channelId: [memberIds] } for voice join/leave detection
   const activeVoiceChannelRef = useRef(null);
+  const voiceAreaRef = useRef(null);
+  const previousActiveVoiceMediaRef = useRef(false);
+  const locallyLeftVoiceChannelsRef = useRef(new Set());
   const channelsRef = useRef([]);
   const toastRef = useRef(null);
   const pendingScrollMessageRef = useRef(null); // messageId to scroll to after channel switch
@@ -78,6 +85,28 @@ function Main({ onLogout, identityKeys }) {
   const [notifSettings, setNotifSettings] = useState(() => loadNotificationSettings(accountKey));
   const [serverBackupEnabled, setServerBackupEnabled] = useState(
     localStorage.getItem('drt_serverBackup') !== 'false'
+  );
+
+  const activeVoiceMediaStates = activeVoiceChannel
+    ? (voiceMediaStatesByChannel[activeVoiceChannel.id] || {})
+    : {};
+  const activeVoiceHasMedia = !!activeVoiceChannel && (
+    localVoiceMediaState.cameraOn ||
+    localVoiceMediaState.screenOn ||
+    Object.values(activeVoiceMediaStates).some(state => state?.cameraOn || state?.screenOn)
+  );
+  const showCallStage = activeVoiceHasMedia && callViewMode === 'stage';
+  const showFloatingCall = activeVoiceHasMedia && callViewMode === 'pip';
+  const currentUserId = localStorage.getItem('userId');
+  const displayedVoiceMembersByChannel = Object.fromEntries(
+    Object.entries(voiceMembersByChannel).map(([channelId, members]) => [
+      channelId,
+      (members || []).map(member => (
+        member.id === currentUserId
+          ? { ...member, isMuted, isDeafened }
+          : member
+      )),
+    ])
   );
 
   // Keep profileModalUser in sync with live user data
@@ -490,12 +519,17 @@ function Main({ onLogout, identityKeys }) {
         setUsers(updatedUsers);
       });
       socketInstance.on('voice:room-members-update', ({ channelId, members }) => {
+        const myId = localStorage.getItem('userId');
+        const channelKey = String(channelId);
+        const visibleMembers = locallyLeftVoiceChannelsRef.current.has(channelKey) && myId
+          ? (members || []).filter(member => member.id !== myId)
+          : (members || []);
+
         // Detect voice join/leave for notifications (only for active voice channel)
         const currentVoiceCh = activeVoiceChannelRef.current;
-        if (currentVoiceCh && currentVoiceCh.id === channelId) {
+        if (currentVoiceCh && String(currentVoiceCh.id) === String(channelId)) {
           const prevIds = prevVoiceMembersRef.current[channelId] || [];
-          const newIds = members.map(m => m.id);
-          const myId = localStorage.getItem('userId');
+          const newIds = visibleMembers.map(m => m.id);
           const currentNotifSettings = loadNotificationSettings(accountKey);
 
           if (currentNotifSettings.enabled && currentNotifSettings.voice && prevIds.length > 0) {
@@ -506,7 +540,7 @@ function Main({ onLogout, identityKeys }) {
             const voiceShowNative = voiceNotifMode === 'desktop' || (voiceNotifMode === 'both' && !windowFocusedRef.current);
 
             for (const uid of joined) {
-              const member = members.find(m => m.id === uid);
+              const member = visibleMembers.find(m => m.id === uid);
               const name = member ? (member.displayName || 'Someone') : 'Someone';
               if (voiceShowToast && toastRef.current) {
                 toastRef.current.addToast({
@@ -537,8 +571,8 @@ function Main({ onLogout, identityKeys }) {
           }
         }
 
-        prevVoiceMembersRef.current[channelId] = members.map(m => m.id);
-        setVoiceMembersByChannel(prev => ({ ...prev, [channelId]: members }));
+        prevVoiceMembersRef.current[channelId] = visibleMembers.map(m => m.id);
+        setVoiceMembersByChannel(prev => ({ ...prev, [channelId]: visibleMembers }));
       });
 
       // Wait for the socket to actually connect before loading data.
@@ -1532,16 +1566,56 @@ function Main({ onLogout, identityKeys }) {
     }
   };
 
+  const removeCurrentUserFromVoiceChannel = (channelId) => {
+    const currentUserId = localStorage.getItem('userId');
+    if (!channelId || !currentUserId) return;
+    const channelKey = String(channelId);
+
+    locallyLeftVoiceChannelsRef.current.add(channelKey);
+
+    setVoiceMembersByChannel(prev => ({
+      ...prev,
+      [channelId]: (prev[channelId] || []).filter(member => member.id !== currentUserId),
+    }));
+
+    setVoiceMediaStatesByChannel(prev => {
+      const currentStates = prev[channelId];
+      if (!currentStates) return prev;
+      const nextStates = { ...currentStates };
+      delete nextStates[currentUserId];
+      return { ...prev, [channelId]: nextStates };
+    });
+
+    setSpeakingUsers(prev => {
+      const next = { ...prev };
+      delete next[currentUserId];
+      return next;
+    });
+
+    prevVoiceMembersRef.current[channelId] = (prevVoiceMembersRef.current[channelId] || [])
+      .filter(id => id !== currentUserId);
+  };
+
   const handleChannelSelect = (channel) => {
     console.log('handleChannelSelect called with:', channel);
     if (channel.type === 'voice') {
       // Auto-join voice channel
       console.log('Setting active voice channel to:', channel.id);
+      locallyLeftVoiceChannelsRef.current.delete(String(channel.id));
+      if (activeVoiceChannel && activeVoiceChannel.id !== channel.id) {
+        removeCurrentUserFromVoiceChannel(activeVoiceChannel.id);
+      }
       setActiveVoiceChannel(channel);
+      if (activeVoiceHasMedia) {
+        setCallViewMode('stage');
+      }
     } else {
       // For text channels, just set as selected for viewing
       console.log('Setting selected text channel to:', channel.id);
       setSelectedChannel(channel);
+      if (activeVoiceHasMedia) {
+        setCallViewMode('pip');
+      }
       // Mark channel as read and remove from unread set
       markChannelAsRead(channel.id);
     }
@@ -1549,7 +1623,35 @@ function Main({ onLogout, identityKeys }) {
 
   const handleLeaveVoice = () => {
     console.log('Leaving voice channel');
+    removeCurrentUserFromVoiceChannel(activeVoiceChannel?.id);
     setActiveVoiceChannel(null);
+    setLocalVoiceMediaState({ cameraOn: false, screenOn: false });
+    setCallViewMode('stage');
+  };
+
+  const handleVoiceMediaStatesChange = (channelId, states) => {
+    if (!channelId) return;
+    setVoiceMediaStatesByChannel(prev => ({
+      ...prev,
+      [channelId]: states || {},
+    }));
+  };
+
+  const handleLocalVoiceMediaStateChange = (next) => {
+    setLocalVoiceMediaState({
+      cameraOn: !!next?.cameraOn,
+      screenOn: !!next?.screenOn,
+    });
+  };
+
+  const handleToggleCamera = () => {
+    if (!activeVoiceChannel) return;
+    voiceAreaRef.current?.toggleCamera?.();
+  };
+
+  const handleToggleScreenShare = () => {
+    if (!activeVoiceChannel) return;
+    voiceAreaRef.current?.toggleScreenShare?.();
   };
 
   const closeSettings = () => {
@@ -1701,6 +1803,16 @@ function Main({ onLogout, identityKeys }) {
     console.log('Main.js: activeVoiceChannel updated to:', activeVoiceChannel);
     activeVoiceChannelRef.current = activeVoiceChannel;
   }, [activeVoiceChannel]);
+
+  useEffect(() => {
+    if (activeVoiceHasMedia && !previousActiveVoiceMediaRef.current) {
+      setCallViewMode('stage');
+    }
+    if (!activeVoiceHasMedia) {
+      setCallViewMode('stage');
+    }
+    previousActiveVoiceMediaRef.current = activeVoiceHasMedia;
+  }, [activeVoiceHasMedia]);
 
   // Keep channelsRef in sync for use in socket callbacks
   useEffect(() => {
@@ -1974,7 +2086,8 @@ function Main({ onLogout, identityKeys }) {
                 channels={channels}
                 selectedChannel={selectedChannel}
                 onSelectChannel={handleChannelSelect}
-                voiceMembersByChannel={voiceMembersByChannel}
+                voiceMembersByChannel={displayedVoiceMembersByChannel}
+                mediaStatesByChannel={voiceMediaStatesByChannel}
                 activeVoiceChannel={activeVoiceChannel}
                 onChannelsChanged={loadChannels}
                 speakingUsers={speakingUsers}
@@ -1984,7 +2097,7 @@ function Main({ onLogout, identityKeys }) {
                 userMutes={userMutes}
                 onVolumeChange={handleVolumeChange}
                 onToggleMute={handleToggleMuteUser}
-                currentUserId={localStorage.getItem('userId')}
+                currentUserId={currentUserId}
                 unreadChannels={unreadChannels}
                 mentionCounts={mentionCounts}
               />
@@ -2005,6 +2118,20 @@ function Main({ onLogout, identityKeys }) {
                   title={isMuted ? "Unmute" : "Mute"}
                 >
                   {isMuted ? <Twemoji emoji="🔇" size={18} /> : <Twemoji emoji="🎤" size={18} />}
+                </button>
+                <button
+                  onClick={handleToggleCamera}
+                  className={`voice-btn media-btn ${localVoiceMediaState.cameraOn ? 'camera-on' : ''}`}
+                  title={localVoiceMediaState.cameraOn ? "Turn Camera Off" : "Turn Camera On"}
+                >
+                  <Twemoji emoji="📹" size={18} />
+                </button>
+                <button
+                  onClick={handleToggleScreenShare}
+                  className={`voice-btn media-btn ${localVoiceMediaState.screenOn ? 'screen-on' : ''}`}
+                  title={localVoiceMediaState.screenOn ? "Stop Screen Share" : "Share Screen"}
+                >
+                  <Twemoji emoji="🖥️" size={18} />
                 </button>
                 <button
                   onClick={handleToggleDeafen}
@@ -2069,6 +2196,12 @@ function Main({ onLogout, identityKeys }) {
                     onClick={() => setSettingsTab('voice')}
                   >
                     Voice
+                  </button>
+                  <button
+                    className={`settings-tab-btn${settingsTab === 'video' ? ' active' : ''}`}
+                    onClick={() => setSettingsTab('video')}
+                  >
+                    Video
                   </button>
                   <button
                     className={`settings-tab-btn${settingsTab === 'notifications' ? ' active' : ''}`}
@@ -2241,6 +2374,10 @@ function Main({ onLogout, identityKeys }) {
 
                   {settingsTab === 'voice' && (
                     <VoiceSettings />
+                  )}
+
+                  {settingsTab === 'video' && (
+                    <VideoSettings />
                   )}
 
                   {settingsTab === 'notifications' && (
@@ -2670,24 +2807,33 @@ function Main({ onLogout, identityKeys }) {
         <>
           <main className="content">
             {activeVoiceChannel && (
-              <VoiceArea 
+              <VoiceArea
+                ref={voiceAreaRef}
                 socket={socket} 
                 channel={activeVoiceChannel} 
                 onLeave={handleLeaveVoice} 
                 onSpeakingChange={setSpeakingUsers} 
                 isMuted={isMuted} 
                 isDeafened={isDeafened}
-                voiceMembers={voiceMembersByChannel[activeVoiceChannel.id] || []}
-                currentUserId={localStorage.getItem('userId')}
+                voiceMembers={displayedVoiceMembersByChannel[activeVoiceChannel.id] || []}
+                currentUserId={currentUserId}
                 selectedUserForControl={selectedUserForControl}
                 onSelectUserForControl={setSelectedUserForControl}
                 userVolumes={userVolumes}
                 userMutes={userMutes}
                 onVolumeChange={handleVolumeChange}
                 onToggleMute={handleToggleMuteUser}
+                showCallStage={showCallStage}
+                showFloatingCall={showFloatingCall}
+                onRestoreCall={() => setCallViewMode('stage')}
+                onMinimizeCall={() => setCallViewMode('pip')}
+                onMediaStatesChange={handleVoiceMediaStatesChange}
+                onLocalMediaStateChange={handleLocalVoiceMediaStateChange}
+                onToggleMuteSelf={handleToggleMute}
+                onToggleDeafenSelf={handleToggleDeafen}
               />
             )}
-            {selectedChannel && selectedChannel.type === 'text' ? (
+            {showCallStage ? null : selectedChannel && selectedChannel.type === 'text' ? (
               <>
                 <div className="channel-header">
                   <h2>{selectedChannel.name}</h2>
