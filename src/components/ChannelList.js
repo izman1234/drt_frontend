@@ -5,25 +5,26 @@ import Twemoji from './Twemoji';
 import './ChannelList.css';
 
 // Memoized component to prevent unnecessary re-renders
-const VoiceMemberComponent = memo(({ member, mediaState, isSelected, onSelect, isSpeaking, nameColor, getMemberProfilePicture, getMemberInitial, userVolumes, userMutes, onVolumeChange, onToggleMute, currentUserId }) => {
+const VoiceMemberComponent = memo(({ member, mediaState, isSelected, onSelect, isSpeaking, nameColor, getMemberProfilePicture, getMemberInitial, userVolumes, userMutes, onVolumeChange, onToggleMute, currentUserId, canControl = false }) => {
   const profilePicture = getMemberProfilePicture(member);
-  const isCurrentUser = member.id === currentUserId;
+  const isCurrentUser = currentUserId && String(member.id) === String(currentUserId);
+  const controlsAvailable = canControl && !isCurrentUser;
   const cameraOn = !!(mediaState?.cameraOn || member.cameraOn);
   const screenOn = !!(mediaState?.screenOn || member.screenOn);
   const handleClick = useCallback((e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!isCurrentUser) {
+    if (controlsAvailable && onSelect) {
       onSelect(isSelected ? null : member);
     }
-  }, [member, isSelected, onSelect, isCurrentUser]);
+  }, [member, isSelected, onSelect, controlsAvailable]);
 
   return (
     <div className="voice-member-wrapper">
       <div 
         className={`voice-member ${isSelected ? 'selected-for-control' : ''}`}
         onClick={handleClick}
-        style={{ cursor: isCurrentUser ? 'default' : 'pointer', userSelect: 'none', position: 'relative' }}
+        style={{ cursor: controlsAvailable ? 'pointer' : 'default', userSelect: 'none', position: 'relative' }}
       >
         <div className={`voice-member-avatar ${isSpeaking ? 'speaking' : ''}`}>
           {profilePicture ? (
@@ -41,7 +42,7 @@ const VoiceMemberComponent = memo(({ member, mediaState, isSelected, onSelect, i
         </span>
       </div>
       
-      {isSelected && onVolumeChange && onToggleMute && (
+      {controlsAvailable && isSelected && onVolumeChange && onToggleMute && (
         <div className="voice-control-inline">
           <div className="control-row">
             <button
@@ -298,17 +299,27 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
             {voiceChannels.map(channel => {
               const membersForChannel = voiceMembersByChannel[channel.id] || [];
               const mediaStatesForChannel = mediaStatesByChannel[channel.id] || {};
+              const isActiveVoiceChannel = activeVoiceChannel && String(activeVoiceChannel.id) === String(channel.id);
+              const currentUserInChannel =
+                currentUserId &&
+                membersForChannel.some(member => String(member.id) === String(currentUserId));
               return (
               <div key={channel.id} className="channel-with-members">
                 {renderChannelItem(channel, activeVoiceChannel?.id === channel.id, 'voice')}
                 <div className="channel-members">
-                  {membersForChannel.map(member => (
+                  {membersForChannel.map(member => {
+                    const canControlMember =
+                      isActiveVoiceChannel &&
+                      currentUserInChannel &&
+                      String(member.id) !== String(currentUserId);
+
+                    return (
                     <VoiceMemberComponent 
                       key={member.id} 
                       member={member}
                       mediaState={mediaStatesForChannel[member.id]}
-                      isSelected={selectedUserForControl?.id === member.id}
-                      onSelect={onSelectUserForControl}
+                      isSelected={canControlMember && selectedUserForControl && String(selectedUserForControl.id) === String(member.id)}
+                      onSelect={canControlMember ? onSelectUserForControl : null}
                       isSpeaking={speakingUsers[member.id]}
                       nameColor={member.nameColor}
                       getMemberProfilePicture={getMemberProfilePicture}
@@ -318,8 +329,10 @@ function ChannelList({ channels, selectedChannel, onSelectChannel, voiceMembersB
                       onVolumeChange={onVolumeChange}
                       onToggleMute={onToggleMute}
                       currentUserId={currentUserId}
+                      canControl={canControlMember}
                     />
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             );

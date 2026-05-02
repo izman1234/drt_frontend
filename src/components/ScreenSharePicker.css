@@ -11,7 +11,7 @@
 
 .screen-picker {
   width: min(920px, 94vw);
-  max-height: min(720px, 90vh);
+  height: min(720px, 90vh);
   background: #1a0d26;
   border: 1px solid #2a1f42;
   border-radius: 8px;
@@ -58,10 +58,61 @@
   color: #a78bba;
   padding: 24px;
   font-size: 14px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .screen-picker-error {
   color: #ff8a96;
+}
+
+.screen-picker-tabs {
+  padding: 12px 16px 0;
+  display: flex;
+  gap: 6px;
+  border-bottom: 1px solid #2a1f42;
+}
+
+.screen-picker-tab {
+  min-width: 0;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: #a78bba;
+  padding: 0 10px 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.screen-picker-tab:hover {
+  color: #e9d5ff;
+}
+
+.screen-picker-tab.active {
+  color: #ffffff;
+  border-bottom-color: #9d43e1;
+}
+
+.screen-picker-tab-count {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: #2a1f42;
+  color: #e9d5ff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.screen-picker-tab.active .screen-picker-tab-count {
+  background: #9d43e1;
+  color: #ffffff;
 }
 
 .screen-picker-system-btn {
@@ -77,9 +128,12 @@
 
 .screen-source-grid {
   padding: 16px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  align-content: start;
   gap: 12px;
 }
 

@@ -343,32 +343,54 @@
 
 .voice-call-bar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px;
+  flex-direction: column;
+  align-items: stretch;
+  padding: 7px;
+  gap: 7px;
   background: #2a1f42;
   border-radius: 4px;
   border-left: 3px solid #9d43e1;
+  min-width: 0;
 }
 
 .voice-call-info {
-  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .voice-channel-name {
   color: #9d43e1;
   font-size: 12px;
   font-weight: bold;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   white-space: nowrap;
+}
+
+.voice-channel-icon {
+  flex: 0 0 auto;
+  line-height: 1;
+}
+
+.voice-channel-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .voice-call-controls {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(4, 32px);
+  justify-content: center;
   align-items: center;
-  gap: 4px;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
 }
 
 .voice-btn {
@@ -378,8 +400,9 @@
   cursor: pointer;
   font-size: 16px;
   padding: 4px;
-  min-width: 28px;
-  height: 28px;
+  min-width: 32px;
+  width: 32px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -412,6 +435,13 @@
 .voice-btn.camera-on:hover,
 .voice-btn.screen-on:hover {
   background: rgba(67, 181, 129, 0.34);
+}
+
+.voice-leave-btn {
+  flex: 0 0 auto;
+  min-width: 32px;
+  width: 32px;
+  height: 30px;
 }
 
 .user-profile {

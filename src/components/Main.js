@@ -109,6 +109,23 @@ function Main({ onLogout, identityKeys }) {
     ])
   );
 
+  const getActiveVoiceMembers = () => {
+    if (!activeVoiceChannel?.id) return [];
+    return voiceMembersByChannel[activeVoiceChannel.id] || [];
+  };
+
+  const canControlVoiceUser = (targetUserId) => {
+    const currentUserId = localStorage.getItem('userId');
+    if (!currentUserId || !targetUserId || !activeVoiceChannel?.id) return false;
+    if (String(currentUserId) === String(targetUserId)) return false;
+
+    const membersInChannel = getActiveVoiceMembers();
+    const currentUserInChannel = membersInChannel.some(member => String(member.id) === String(currentUserId));
+    const targetUserInChannel = membersInChannel.some(member => String(member.id) === String(targetUserId));
+
+    return currentUserInChannel && targetUserInChannel;
+  };
+
   // Keep profileModalUser in sync with live user data
   useEffect(() => {
     if (profileModalUser && users.length > 0) {
@@ -259,12 +276,20 @@ function Main({ onLogout, identityKeys }) {
 
   const handleVolumeChange = (userId, volume) => {
     const currentUserId = localStorage.getItem('userId');
-    setUserVolumes(prev => ({ ...prev, [userId]: volume }));
-    localStorage.setItem(`voiceVolume_${currentUserId}_${userId}`, volume);
+    if (!canControlVoiceUser(userId)) return;
+
+    const nextVolume = Number(volume);
+    if (!Number.isFinite(nextVolume)) return;
+
+    const clampedVolume = Math.min(2, Math.max(0, nextVolume));
+    setUserVolumes(prev => ({ ...prev, [userId]: clampedVolume }));
+    localStorage.setItem(`voiceVolume_${currentUserId}_${userId}`, clampedVolume);
   };
 
   const handleToggleMuteUser = (userId) => {
     const currentUserId = localStorage.getItem('userId');
+    if (!canControlVoiceUser(userId)) return;
+
     const newMuteState = !userMutes[userId];
     setUserMutes(prev => ({ ...prev, [userId]: newMuteState }));
     localStorage.setItem(`voiceMute_${currentUserId}_${userId}`, newMuteState);
@@ -273,20 +298,27 @@ function Main({ onLogout, identityKeys }) {
   // Initialize volume and mute settings from localStorage when voice members change
   useEffect(() => {
     const currentUserId = localStorage.getItem('userId');
-    if (voiceMembersByChannel && activeVoiceChannel) {
+    if (voiceMembersByChannel && activeVoiceChannel && currentUserId) {
       const membersInChannel = voiceMembersByChannel[activeVoiceChannel.id] || [];
+      const currentUserInChannel = membersInChannel.some(member => String(member.id) === String(currentUserId));
+      if (!currentUserInChannel) return;
+
       membersInChannel.forEach(member => {
         // Load volume setting
-        if (member.id !== currentUserId && !(member.id in userVolumes)) {
+        if (String(member.id) !== String(currentUserId) && !(member.id in userVolumes)) {
           const volumeKey = `voiceVolume_${currentUserId}_${member.id}`;
           const savedVolume = localStorage.getItem(volumeKey);
           if (savedVolume !== null) {
-            handleVolumeChange(member.id, parseFloat(savedVolume));
+            const parsedVolume = Number(savedVolume);
+            if (Number.isFinite(parsedVolume)) {
+              const clampedVolume = Math.min(2, Math.max(0, parsedVolume));
+              setUserVolumes(prev => ({ ...prev, [member.id]: clampedVolume }));
+            }
           }
         }
         
         // Load mute setting
-        if (member.id !== currentUserId && !(member.id in userMutes)) {
+        if (String(member.id) !== String(currentUserId) && !(member.id in userMutes)) {
           const muteKey = `voiceMute_${currentUserId}_${member.id}`;
           const savedMute = localStorage.getItem(muteKey);
           if (savedMute !== null) {
@@ -1605,6 +1637,7 @@ function Main({ onLogout, identityKeys }) {
       if (activeVoiceChannel && activeVoiceChannel.id !== channel.id) {
         removeCurrentUserFromVoiceChannel(activeVoiceChannel.id);
       }
+      setSelectedUserForControl(null);
       setActiveVoiceChannel(channel);
       if (activeVoiceHasMedia) {
         setCallViewMode('stage');
@@ -1624,6 +1657,7 @@ function Main({ onLogout, identityKeys }) {
   const handleLeaveVoice = () => {
     console.log('Leaving voice channel');
     removeCurrentUserFromVoiceChannel(activeVoiceChannel?.id);
+    setSelectedUserForControl(null);
     setActiveVoiceChannel(null);
     setLocalVoiceMediaState({ cameraOn: false, screenOn: false });
     setCallViewMode('stage');
@@ -1803,6 +1837,27 @@ function Main({ onLogout, identityKeys }) {
     console.log('Main.js: activeVoiceChannel updated to:', activeVoiceChannel);
     activeVoiceChannelRef.current = activeVoiceChannel;
   }, [activeVoiceChannel]);
+
+  useEffect(() => {
+    if (!selectedUserForControl) return;
+
+    if (!activeVoiceChannel?.id || !currentUserId) {
+      setSelectedUserForControl(null);
+      return;
+    }
+
+    const membersInChannel = voiceMembersByChannel[activeVoiceChannel.id] || [];
+    const currentUserInChannel = membersInChannel.some(member => String(member.id) === String(currentUserId));
+    const selectedUserInChannel = membersInChannel.some(member => String(member.id) === String(selectedUserForControl.id));
+
+    if (
+      String(selectedUserForControl.id) === String(currentUserId) ||
+      !currentUserInChannel ||
+      !selectedUserInChannel
+    ) {
+      setSelectedUserForControl(null);
+    }
+  }, [activeVoiceChannel, currentUserId, selectedUserForControl, voiceMembersByChannel]);
 
   useEffect(() => {
     if (activeVoiceHasMedia && !previousActiveVoiceMediaRef.current) {
@@ -2109,7 +2164,13 @@ function Main({ onLogout, identityKeys }) {
           <div className="sidebar-footer">
             <div className="voice-call-bar">
               <div className="voice-call-info">
-                <span className="voice-channel-name"><Twemoji emoji="🔊" size={16} /> {activeVoiceChannel.name}</span>
+                <span className="voice-channel-name">
+                  <span className="voice-channel-icon"><Twemoji emoji="🔊" size={14} /></span>
+                  <span className="voice-channel-label">{activeVoiceChannel.name}</span>
+                </span>
+                <button onClick={handleLeaveVoice} className="hangup-btn voice-leave-btn" title="Leave Voice">
+                  <Twemoji emoji="📞" size={18} />
+                </button>
               </div>
               <div className="voice-call-controls">
                 <button
@@ -2118,6 +2179,13 @@ function Main({ onLogout, identityKeys }) {
                   title={isMuted ? "Unmute" : "Mute"}
                 >
                   {isMuted ? <Twemoji emoji="🔇" size={18} /> : <Twemoji emoji="🎤" size={18} />}
+                </button>
+                <button
+                  onClick={handleToggleDeafen}
+                  className={`voice-btn ${isDeafened ? 'deafened' : ''}`}
+                  title={isDeafened ? "Undeafen" : "Deafen"}
+                >
+                  {isDeafened ? <Twemoji emoji="🔕" size={18} /> : <Twemoji emoji="🔊" size={18} />}
                 </button>
                 <button
                   onClick={handleToggleCamera}
@@ -2132,16 +2200,6 @@ function Main({ onLogout, identityKeys }) {
                   title={localVoiceMediaState.screenOn ? "Stop Screen Share" : "Share Screen"}
                 >
                   <Twemoji emoji="🖥️" size={18} />
-                </button>
-                <button
-                  onClick={handleToggleDeafen}
-                  className={`voice-btn ${isDeafened ? 'deafened' : ''}`}
-                  title={isDeafened ? "Undeafen" : "Deafen"}
-                >
-                  {isDeafened ? <Twemoji emoji="🔕" size={18} /> : <Twemoji emoji="🔊" size={18} />}
-                </button>
-                <button onClick={handleLeaveVoice} className="hangup-btn" title="Leave Voice">
-                  <Twemoji emoji="📞" size={18} />
                 </button>
               </div>
             </div>

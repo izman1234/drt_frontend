@@ -1,10 +1,30 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import './ScreenSharePicker.css';
 
 function ScreenSharePicker({ isOpen, onSelect, onCancel }) {
   const [sources, setSources] = useState([]);
+  const [activeTab, setActiveTab] = useState('application');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const groupedSources = useMemo(() => {
+    const applications = [];
+    const screens = [];
+
+    sources.forEach((source) => {
+      if (String(source.id || '').startsWith('screen:')) {
+        screens.push(source);
+      } else {
+        applications.push(source);
+      }
+    });
+
+    return { applications, screens };
+  }, [sources]);
+
+  const visibleSources = activeTab === 'screen'
+    ? groupedSources.screens
+    : groupedSources.applications;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -36,6 +56,16 @@ function ScreenSharePicker({ isOpen, onSelect, onCancel }) {
     return () => { cancelled = true; };
   }, [isOpen]);
 
+  useEffect(() => {
+    if (!isOpen || loading) return;
+    if (activeTab === 'application' && groupedSources.applications.length === 0 && groupedSources.screens.length > 0) {
+      setActiveTab('screen');
+    }
+    if (activeTab === 'screen' && groupedSources.screens.length === 0 && groupedSources.applications.length > 0) {
+      setActiveTab('application');
+    }
+  }, [activeTab, groupedSources.applications.length, groupedSources.screens.length, isOpen, loading]);
+
   if (!isOpen) return null;
 
   return (
@@ -49,6 +79,29 @@ function ScreenSharePicker({ isOpen, onSelect, onCancel }) {
         {loading && <div className="screen-picker-status">Loading sources...</div>}
         {error && <div className="screen-picker-error">{error}</div>}
 
+        {!loading && sources.length > 0 && (
+          <div className="screen-picker-tabs" role="tablist" aria-label="Screen share source type">
+            <button
+              className={`screen-picker-tab ${activeTab === 'application' ? 'active' : ''}`}
+              onClick={() => setActiveTab('application')}
+              role="tab"
+              aria-selected={activeTab === 'application'}
+            >
+              Applications
+              <span className="screen-picker-tab-count">{groupedSources.applications.length}</span>
+            </button>
+            <button
+              className={`screen-picker-tab ${activeTab === 'screen' ? 'active' : ''}`}
+              onClick={() => setActiveTab('screen')}
+              role="tab"
+              aria-selected={activeTab === 'screen'}
+            >
+              Entire Screen
+              <span className="screen-picker-tab-count">{groupedSources.screens.length}</span>
+            </button>
+          </div>
+        )}
+
         {!loading && sources.length === 0 && (
           <div className="screen-picker-empty">
             <p>Use your system picker to choose a screen or window.</p>
@@ -58,9 +111,15 @@ function ScreenSharePicker({ isOpen, onSelect, onCancel }) {
           </div>
         )}
 
-        {sources.length > 0 && (
+        {!loading && sources.length > 0 && visibleSources.length === 0 && (
+          <div className="screen-picker-empty">
+            <p>No {activeTab === 'screen' ? 'screens' : 'applications'} are available to share.</p>
+          </div>
+        )}
+
+        {!loading && visibleSources.length > 0 && (
           <div className="screen-source-grid">
-            {sources.map(source => (
+            {visibleSources.map(source => (
               <button
                 key={source.id}
                 className="screen-source-card"
